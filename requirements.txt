@@ -48,3 +48,4 @@ pytest-asyncio
 black
 ruff
 moto[s3]  # Mock AWS S3 for testing
+asyncpg
