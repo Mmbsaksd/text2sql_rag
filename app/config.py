@@ -49,9 +49,14 @@ class Settings(BaseSettings):
     S3_CACHE_BUCKET: str | None=None
     AWS_REGION: str | None=None
 
+    OPIK_API_KEY: str | None = None
+    OPIK_PROJECT_NAME: str | None = None
+
     class Config:
-        env_file=".env"
-        case_sensitive=True
+        env_file = ".env"
+        case_sensitive = True
+        #extra = "allow"
+
 @lru_cache
 def get_settings():
     return Settings()
