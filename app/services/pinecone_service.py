@@ -10,7 +10,7 @@ class PineconeService:
         self.client = Pinecone(
             api_key=settings.PINECONE_API_KEY
         )
-        self.index = self.client.index(
+        self.index = self.client.Index(
             settings.PINECONE_INDEX_NAME
         )
     def health_check(self):
