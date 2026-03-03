@@ -66,7 +66,7 @@ async def health_check():
         "storage": settings.STORAGE_BACKEND
     }
 
-@app.get("/test/embeddimgs")
+@app.get("/test/embeddings")
 async def test_embedding():
     text = "Hello, this is a test sentence."
     embedding = await registry.embeddings.get_embedding(text)
@@ -75,4 +75,34 @@ async def test_embedding():
         "embedding_length": len(embedding),
         "first_5_values": embedding[:5],
         "cached":False
+    }
+
+@app.get("/test/pinecone")
+async def test_pinecone():
+    stats_before = registry.vector_db.get_stats()
+
+    test_text = "This is a test document chunk about sales revenue."
+    embedding = await registry.embeddings.get_embedding(test_text)
+
+    test_vector = [{
+        "id": "test-vector-001",
+        "values":embedding,
+        "metadata": {
+            "text": test_text,
+            "document_id": "test-vector-001",
+            "filename": "test.pdf",
+            "chunk_index":0
+        }
+    }]
+
+    upserted = registry.vector_db.upsert(test_vector)
+    matches = registry.vector_db.query(embedding, top_k=1)
+    registry.vector_db.deleted_by_document_id("test-vector-001")
+    return{
+        "stats_before":stats_before,
+        "vectors_upserted": upserted,
+        "query_matches": len(matches),
+        "top_match_score": matches[0]["score"] if matches else None,
+        "top_match_text": matches[0]["metadata"]["text"] if matches else None,
+        "cleanup": "test vector deleted"
     }
