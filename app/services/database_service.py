@@ -15,6 +15,6 @@ class DatabaseService:
     
     async def health_check(self):
         async with self.pool.acquire() as conn:
-            result = await conn.fetch("SELECT 1:")
+            result = await conn.fetch("SELECT 1")
             return result is not None
         

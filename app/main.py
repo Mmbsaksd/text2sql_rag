@@ -7,6 +7,7 @@ from app.services.database_service import DatabaseService
 from app.services.pinecone_service import PineconeService
 from app.services.redis_service import RedisService
 from app.services.storage_service import StorageService
+from app.services.embedding_service import EmbeddingService
 
 logger = setup_logging()
 
@@ -37,6 +38,10 @@ async def startup_event():
     registry.storage = StorageService()
     logger.info(f"Storage backend: {settings.STORAGE_BACKEND}")
 
+    #Embeddings
+    registry.embeddings = EmbeddingService(redis_service=registry.cache)
+    logger.info("Embedding service ready")
+
     logger.info("Application startup complete")
 
 @app.on_event("shutdown")
@@ -59,4 +64,15 @@ async def health_check():
         "pinecone":pinecone_status,
         "redis": redis_status,
         "storage": settings.STORAGE_BACKEND
+    }
+
+@app.get("/test/embeddimgs")
+async def test_embedding():
+    text = "Hello, this is a test sentence."
+    embedding = await registry.embeddings.get_embedding(text)
+    return{
+        "test": text,
+        "embedding_length": len(embedding),
+        "first_5_values": embedding[:5],
+        "cached":False
     }

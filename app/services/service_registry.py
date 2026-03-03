@@ -4,5 +4,6 @@ class ServiceRegistry:
         self.vector_db=None
         self.cache=None
         self.storage=None
+        self.embeddings=None
 
 registry=ServiceRegistry()
