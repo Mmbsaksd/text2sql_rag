@@ -106,3 +106,36 @@ async def test_pinecone():
         "top_match_text": matches[0]["metadata"]["text"] if matches else None,
         "cleanup": "test vector deleted"
     }
+
+@app.get("/test/chunking")
+async def test_chunking():
+    from app.services.chunking_service import ChunkingService
+    chunker = ChunkingService(chunk_size=50, chunk_overlap=10)
+
+    sample_text = """
+    Artificial intelligence is transforming how businesses operate.
+    Companies are leveraging machine learning models to automate repetitive tasks,
+    analyze large datasets, and generate insights that were previously impossible.
+    Natural language processing allows computers to understand human language,
+    enabling applications like chatbots, document analysis, and automated reporting.
+    The future of AI in business looks promising, with new tools emerging every year
+    that make it easier for non-technical users to benefit from these technologies.
+    Organizations that invest in AI capabilities today will have a significant
+    competitive advantage over those that delay adoption.
+    """ * 3
+
+    chunks = chunker.chunk_text(sample_text, metadata={"filename": "test.pdf", "page_number": 1})
+  
+    return {
+      "total_chunks": len(chunks),
+      "chunk_size_setting": 50,
+      "overlap_setting": 10,
+      "chunks_preview": [
+          {
+              "chunk_index": c["chunk_index"],
+              "word_count": c["word_count"],
+              "text_preview": c["text"][:80] + "..."
+              }
+              for c in chunks
+      ]
+  }

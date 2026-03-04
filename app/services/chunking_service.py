@@ -24,7 +24,7 @@ class ChunkingService:
           - metadata    : any extra info passed in (filename, page, etc.)
         """
 
-        if not text or text.strip();
+        if not text or not text.strip():
             return []
         
         text = self._clean_text(text)
@@ -43,7 +43,7 @@ class ChunkingService:
             chunk_text = " ".join(chunk_words)
 
             chunk = {
-                "text": self.chunk_text,
+                "text": chunk_text,
                 "chunk_index": chunk_index,
                 "word_count": len(chunk_words),
                 "metadata": metadata or {}
@@ -86,6 +86,7 @@ class ChunkingService:
             page_chunk = self.chunk_text(page_text, metadata=page_metadata)
             for chunk in page_chunk:
                 chunk["chunk_index"] = global_chunk_index
+                all_chunks.append(chunk)
                 global_chunk_index +=1
 
         logger.info(
