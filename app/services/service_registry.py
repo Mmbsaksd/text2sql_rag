@@ -5,5 +5,6 @@ class ServiceRegistry:
         self.cache=None
         self.storage=None
         self.embeddings=None
+        self.documents=None
 
 registry=ServiceRegistry()

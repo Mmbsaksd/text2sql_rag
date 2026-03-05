@@ -139,3 +139,5 @@ async def test_chunking():
               for c in chunks
       ]
   }
+@app.post("/test/document")
+asy
