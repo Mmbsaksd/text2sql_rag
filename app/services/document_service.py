@@ -100,7 +100,7 @@ class DocumentService:
             if file_ext == "pdf":
                 return self._extract_pdf(file_bytes, filename)
             elif file_ext == "txt":
-                return self._extract_text(file_bytes, filename)
+                return [file_bytes.decode("utf-8", errors="ignore")]
             elif file_ext == ".csv":
                 return self._extract_csv(file_bytes, filename)
             elif file_ext == "json":
@@ -138,7 +138,7 @@ class DocumentService:
             text = file_bytes.decode("utf-8", errors="ignore")
             return [{ "text": text, "page_number": 1, "filename": filename}]
         
-    def _extract_txt(self, file_bytes: bytes, filename: str) -> list[dict]:
+    def _extract_txt(self, file_bytes: bytes, filename: str, file_ext) -> list[dict]:
         """Extract text from plain text file."""
         text = file_bytes.decode("utf-8", errors="ignore")
         return [{"text": text, "page_number": 1, "filename": filename}]

@@ -8,6 +8,8 @@ from app.services.pinecone_service import PineconeService
 from app.services.redis_service import RedisService
 from app.services.storage_service import StorageService
 from app.services.embedding_service import EmbeddingService
+from app.services.document_service import DocumentService   
+from app.services.chunking_service import ChunkingService
 
 logger = setup_logging()
 
@@ -41,6 +43,15 @@ async def startup_event():
     #Embeddings
     registry.embeddings = EmbeddingService(redis_service=registry.cache)
     logger.info("Embedding service ready")
+
+    #Chunking
+    chunking = ChunkingService(chunk_size=512, chunk_overlap=50)
+    registry.documents = DocumentService(
+        chunking_service=chunking,
+        embedding_service=registry.embeddings,
+        vector_service=registry.vector_db
+    )
+    logger.info("Document service ready")
 
     logger.info("Application startup complete")
 
@@ -140,4 +151,26 @@ async def test_chunking():
       ]
   }
 @app.post("/test/document")
-asy
+async def test_document_upload():
+    """Test document processing with a synthetic text document."""
+    sample_content = (
+        "Q3 Financial Report Summary. "
+        "Total revenue for Q3 reached 4.2 million dollars, "
+        "representing a 15 percent increase over Q2. "
+        "The sales team closed 142 new enterprise deals. "
+        "Customer retention rate improved to 94 percent. "
+        "Operating expenses were reduced by 8 percent through process automation. "
+        "The product team shipped 3 major feature releases. "
+        "Net promoter score increased from 42 to 67. "
+        "Headcount grew from 85 to 112 employees. "
+        "Cash reserves stand at 8.1 million dollars. "
+        "Q4 forecast projects 4.8 million in revenue. "
+    ) * 5 
+    file_bytes = sample_content.encode("utf-8")
+
+    result = await registry.documents.process_upload(
+        file_bytes=file_bytes,
+        filename ="q3_report.txt",
+        content_type="text/plain"
+    )
+    return result
