@@ -18,7 +18,7 @@ MAX_FILE_SIZE_MB = 50
 class DocumentService:
     def __init__(self, chunking_service, embedding_service, vector_service):
         self.chunker = chunking_service
-        self_embedder = embedding_service
+        self.embedder = embedding_service
         self.vector = vector_service
     # ------------------------------------------------------------------
     # MAIN METHOD — called by the /upload endpoint
@@ -43,7 +43,7 @@ class DocumentService:
         if not pages:
             raise ValueError(f"No text could be extracted from {filename}")
         
-        total_text_length = sum(len(p["text"] for p in pages))
+        total_text_length = sum(len(p["text"]) for p in pages)
         logger.info(
             f"Extracted text from {len(pages)} page(s), "
             f"{total_text_length} total characters"
@@ -59,7 +59,7 @@ class DocumentService:
         for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
             vector_id = f"{document_id}chunk{i}"
             vectors.append({
-                "Id": vector_id,
+                "id": vector_id,
                 "values": embedding,
                 "metadata":{
                     "document_id": document_id,
@@ -100,8 +100,8 @@ class DocumentService:
             if file_ext == "pdf":
                 return self._extract_pdf(file_bytes, filename)
             elif file_ext == "txt":
-                return [file_bytes.decode("utf-8", errors="ignore")]
-            elif file_ext == ".csv":
+                return self._extract_txt(file_bytes, filename)
+            elif file_ext == "csv":
                 return self._extract_csv(file_bytes, filename)
             elif file_ext == "json":
                 return self._extract_json(file_bytes, filename)
@@ -168,8 +168,9 @@ class DocumentService:
         """Extract text from JSON — flatten to readable key: value pairs."""
         import json
         try:
-            data = json.load(file_bytes.decode("utf-8", errors="ignore"))
+            data = json.loads(file_bytes.decode("utf-8", errors="ignore"))
             text = self._flatten_json(data)
+            return [{"text": text, "page_number": 1, "filename": filename}]
         except Exception as e:
             logger.warning(f"JSON parsing failed, using raw text: {e}")
             text = file_bytes.decode("utf-8", errors="ignore")
@@ -240,4 +241,4 @@ class DocumentService:
             logger.info(
                 f"Upserted batch {i // batch_size + 1}: {count} vectors"
             )
-            return total_upserted
+        return total_upserted

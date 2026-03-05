@@ -79,7 +79,7 @@ class EmbeddingService:
                 model=self.deployment,
             )
             for j, item in enumerate(response.data):
-                idx = uncacned_indices[0]
+                idx = uncacned_indices[j]
                 embeddings[idx] = item.embedding
 
                 if self.redis:

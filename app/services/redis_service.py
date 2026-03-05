@@ -23,13 +23,13 @@ class RedisService:
 
             if value is None:
                 return None
-            return json.load(value)
+            return json.loads(value)
         
     async def set(self, key: str, value, ttl: int = None):
         pass
 
     async def health_check(self):
-        async with httpx.AsyncClient as client:
+        async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{self.url}/ping",
                 headers={"Authorization": f"Bearer {self.token}"}
