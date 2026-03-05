@@ -56,7 +56,7 @@ class PineconeService:
         logger.info(f"Pinecone query returned {len(matches)} matches")
         return matches
     
-    def deleted_by_document_id(self, document_id: str) -> bool:
+    def delete_by_document_id(self, document_id: str) -> bool:
         """
         Delete all vectors belonging to a specific document.
         We find them using metadata filter on document_id.

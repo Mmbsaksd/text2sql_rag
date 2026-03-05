@@ -59,7 +59,7 @@ class EmbeddingService:
         """
         embeddings = []
         uncached_texts = []
-        uncacned_indices = []
+        uncached_indices = []
 
         for i, text in enumerate(texts):
             if self.redis:
@@ -70,7 +70,7 @@ class EmbeddingService:
                     continue
             embeddings.append(None)
             uncached_texts.append(text)
-            uncacned_indices.append(i)
+            uncached_indices.append(i)
 
         if uncached_texts:
             logger.info(f"Fetching {len(uncached_texts)} embeddings from Azure OpenAI")
@@ -79,7 +79,7 @@ class EmbeddingService:
                 model=self.deployment,
             )
             for j, item in enumerate(response.data):
-                idx = uncacned_indices[j]
+                idx = uncached_indices[j]
                 embeddings[idx] = item.embedding
 
                 if self.redis:

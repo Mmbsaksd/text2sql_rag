@@ -1,3 +1,5 @@
+from asyncio.log import logger
+
 import httpx
 import json
 from app.config import settings
@@ -26,7 +28,25 @@ class RedisService:
             return json.loads(value)
         
     async def set(self, key: str, value, ttl: int = None):
-        pass
+        try:
+            serialized = json.dumps(value)
+            async with httpx.AsyncClient() as client:
+                if ttl:
+                    response = await client.post(
+                        f"{self.url}/set/{key}",
+                        headers={"Authorization": f"Bearer {self.token}"},
+                        json=[serialized,"EX",ttl]
+                    )
+                else:
+                    response = await client.post(
+                        f"{self.url}/set/{key}",
+                        headers={"Authorization": f"Bearer {self.token}"},
+                        json=[serialized]
+                    )
+                return response.status_code == 200
+        except Exception as e:
+            logger.error(f"Redis SET failed for key {key}: {e}")
+            return False
 
     async def health_check(self):
         async with httpx.AsyncClient() as client:

@@ -138,7 +138,7 @@ class DocumentService:
             text = file_bytes.decode("utf-8", errors="ignore")
             return [{ "text": text, "page_number": 1, "filename": filename}]
         
-    def _extract_txt(self, file_bytes: bytes, filename: str, file_ext) -> list[dict]:
+    def _extract_txt(self, file_bytes: bytes, filename: str) -> list[dict]:
         """Extract text from plain text file."""
         text = file_bytes.decode("utf-8", errors="ignore")
         return [{"text": text, "page_number": 1, "filename": filename}]
@@ -174,6 +174,7 @@ class DocumentService:
         except Exception as e:
             logger.warning(f"JSON parsing failed, using raw text: {e}")
             text = file_bytes.decode("utf-8", errors="ignore")
+            return [{"text": text, "page_number": 1, "filename": filename}]
 
     def _extract_docx(self, file_bytes: bytes, filename: str) -> list[dict]:
         """Extract text from Word document."""
@@ -234,7 +235,7 @@ class DocumentService:
         This prevents timeouts on large documents.
         """
         total_upserted = 0
-        for i, in range(0, len(vectors), batch_size):
+        for i in range(0, len(vectors), batch_size):
             batch = vectors[i:i+batch_size]
             count = self.vector.upsert(batch)
             total_upserted +=count
