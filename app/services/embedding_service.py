@@ -21,7 +21,7 @@ class EmbeddingService:
         text_hash = hashlib.sha256(text.encode()).hexdigest()
         return f"embedding:{text_hash}"
     
-    async def get_embedding(self, text: str)-> str:
+    async def get_embedding(self, text: str)-> list[float]:
         """
         Get embedding vector for a single text.
         Checks Redis cache first — if found, returns instantly.
@@ -30,10 +30,15 @@ class EmbeddingService:
         if self.redis:
             cache_key = self._make_cache_key(text)
             cached = await self.redis.get(cache_key)
+
             if cached is not None:
-                logger.info(f"Embedding cache HIT for key {cached[:30]}...")
-                return cached
-        
+                logger.info(f"Embedding cache HIT for key {cache_key[:30]}...")
+
+                if isinstance(cached, str):
+                    cached = json.loads(cached)
+
+                return [float(v) for v in cached]
+                    
         logger.info("Embedding cache MISS- calling Azure OpenAI")
         response = self.client.embeddings.create(
             input=text,
@@ -66,7 +71,7 @@ class EmbeddingService:
                 cache_key = self._make_cache_key(text)
                 cached = await self.redis.get(cache_key)
                 if cached is not None:
-                    embeddings.append(cached)
+                    embeddings.append([float(v) for v in cached])
                     continue
             embeddings.append(None)
             uncached_texts.append(text)

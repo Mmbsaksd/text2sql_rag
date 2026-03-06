@@ -43,7 +43,7 @@ class RAGService:
           5. Cache and return the answer
         """
 
-        if not question or question.strip():
+        if not question or not question.strip():
             raise ValueError("Question cannot be empty")
         
         if len(question)>1000:
@@ -56,9 +56,10 @@ class RAGService:
 
             if cached:
                 logger.info(f"RAG cache HIT for question: {question[:50]}...")
-                cached["cached"] = True
-                return cached
-        
+                if isinstance(cached, dict):
+                    cached["cached"] = True
+                    return cached
+            
         logger.info(f"RAG query: {question[:80]}...")
         question_embedding = await self.embedder.get_embedding(question)
 
@@ -121,8 +122,8 @@ class RAGService:
                     "text_preview": text[:150] + "..." if len(text) > 150 else text
                 }
             )
-            context = "\n\n---\n\n".join(context_parts)
-            return context, sources
+        context = "\n\n---\n\n".join(context_parts)
+        return context, sources
         
     def _generate_answer(self, question: str, context: str) -> str:
         """
@@ -140,6 +141,7 @@ Question: {question}
 Answer based only on the context above:"""
         logger.info(f"Calling Azure OpenAI ({self.deployment}) for RAG answer")
         response = self.client.chat.completions.create(
+            model=self.deployment,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_message}

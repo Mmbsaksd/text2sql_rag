@@ -30,18 +30,22 @@ class RedisService:
     async def set(self, key: str, value, ttl: int = None):
         try:
             serialized = json.dumps(value)
+            headers= {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json"
+        }
             async with httpx.AsyncClient() as client:
                 if ttl:
                     response = await client.post(
-                        f"{self.url}/set/{key}",
-                        headers={"Authorization": f"Bearer {self.token}"},
-                        json=[serialized,"EX",ttl]
+                        f"{self.url}/set/{key}/ex/{ttl}",
+                        headers=headers,
+                        content=serialized 
                     )
                 else:
                     response = await client.post(
                         f"{self.url}/set/{key}",
-                        headers={"Authorization": f"Bearer {self.token}"},
-                        json=[serialized]
+                        headers=headers,
+                        content=serialized 
                     )
                 return response.status_code == 200
         except Exception as e:

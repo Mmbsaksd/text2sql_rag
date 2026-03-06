@@ -116,7 +116,7 @@ async def test_pinecone():
 
     upserted = registry.vector_db.upsert(test_vector)
     matches = registry.vector_db.query(embedding, top_k=1)
-    registry.vector_db.deleted_by_document_id("test-vector-001")
+    registry.vector_db.delete_by_document_id("test-vector-001")
     return{
         "stats_before":stats_before,
         "vectors_upserted": upserted,
@@ -183,7 +183,7 @@ async def test_document_upload():
     )
     return result
 
-@app.get("/text/rag")
+@app.get("/test/rag")
 async def test_rag():
     """
     Test the full RAG pipeline.
