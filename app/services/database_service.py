@@ -17,4 +17,3 @@ class DatabaseService:
         async with self.pool.acquire() as conn:
             result = await conn.fetchval("SELECT 1")
             return result==1
-        
