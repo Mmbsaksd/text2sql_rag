@@ -10,6 +10,7 @@ from app.services.storage_service import StorageService
 from app.services.embedding_service import EmbeddingService
 from app.services.document_service import DocumentService   
 from app.services.chunking_service import ChunkingService
+from app.services.rag_service import RAGService
 
 logger = setup_logging()
 
@@ -52,6 +53,13 @@ async def startup_event():
         vector_service=registry.vector_db
     )
     logger.info("Document service ready")
+
+    registry.rag = RAGService(
+        embedding_service=registry.embeddings,
+        vector_service=registry.vector_db,
+        redis_service=registry.cache
+    )
+    logger.info("RAG service ready")
 
     logger.info("Application startup complete")
 
@@ -172,5 +180,19 @@ async def test_document_upload():
         file_bytes=file_bytes,
         filename ="q3_report.txt",
         content_type="text/plain"
+    )
+    return result
+
+@app.get("/text/rag")
+async def test_rag():
+    """
+    Test the full RAG pipeline.
+    NOTE: You must have uploaded at least one document first
+    via POST /test/document before running this test.
+    """
+    question = "What was the total revenue and how many employees?"
+    result = await registry.rag.query(
+        question=question,
+        top_k=3
     )
     return result

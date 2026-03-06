@@ -71,7 +71,24 @@ class RAGService:
                 "chunks_used": 0,
                 "cached": False
             }
-        context, sources = self._bui
+        context, sources = self._build_context(matches)
+        answer = self._generate_answer(question, context)
+
+        result = {
+            "answer": answer,
+            "sources": sources,
+            "chunks_used": len(matches),
+            "cached": False
+        }
+        if self.redis:
+            await self.redis.set(
+                cache_key,
+                result,
+                ttl=settings.CACHE_TTL_RAG
+            )
+            logger.info("RAG answer cached in Redis")
+
+        return result
 
 
     def _build_context(self, matches: list) -> tuple[str, list]:
@@ -83,9 +100,57 @@ class RAGService:
         context_parts = []
         sources = []
 
+        for i, match in enumerate(matches):
+            metadata = match.get("metadata", {})
+            text = metadata.get("text","")
+            filename = metadata.get("filename", "unknown")
+            page = metadata.get("page_number", 1)
+            score = round(match.get("score", 0),4)
+
+            if not text:
+                continue
+
+            context_parts.append(
+                f"[Source {i+1}: {filename}, page {page}]\n{text}"
+            )
+            sources.append(
+                {
+                    "filename": filename,
+                    "page_number": page,
+                    "relevance_score": score,
+                    "text_preview": text[:150] + "..." if len(text) > 150 else text
+                }
+            )
+            context = "\n\n---\n\n".join(context_parts)
+            return context, sources
         
+    def _generate_answer(self, question: str, context: str) -> str:
+        """
+        Call Azure OpenAI GPT-4 with the question and retrieved context.
+        Returns the generated answer string.
+        """
+        user_message = f"""Context from uploaded documents:
 
+{context}
 
+---
+
+Question: {question}
+
+Answer based only on the context above:"""
+        logger.info(f"Calling Azure OpenAI ({self.deployment}) for RAG answer")
+        response = self.client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_message}
+            ],
+            temperature=0.1,
+            max_tokens=800
+        )
+
+        answer = response.choices[0].message.content.strip()
+        logger.info("RAG answer generated successfully")
+        return answer
 
     def _make_cache_key(self, question: str, top_k: int) -> str:
         """Unique Redis key based on question content + top_k setting."""
