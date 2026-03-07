@@ -1,7 +1,8 @@
 import hashlib
 import logging
-from openai import AzureOpenAI
+from openai import AsyncAzureOpenAI
 from app.config import settings
+import asyncio
 
 logger = logging.getLogger("app")
 
@@ -21,7 +22,7 @@ class RAGService:
         self.vector = vector_service
         self.redis = redis_service
 
-        self.client = AzureOpenAI(
+        self.client = AsyncAzureOpenAI(
             api_key=settings.AZURE_OPENAI_API_KEY,
             azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
             api_version=settings.AZURE_OPENAI_API_VERSION
@@ -52,18 +53,27 @@ class RAGService:
         cache_key = self._make_cache_key(question, top_k)
 
         if self.redis:
-            cached = await self.redis.get(cache_key)
+            cached = None
+            try:
+                cached = await self.redis.get(cache_key)
+            except Exception as e:
+                logger.warning("Redis GET failed, skipping cache")
 
-            if cached:
-                logger.info(f"RAG cache HIT for question: {question[:50]}...")
+            if cached is not None:
                 if isinstance(cached, dict):
+                    logger.info(f"RAG cache HIT for question: {question[:50]}...")
                     cached["cached"] = True
                     return cached
+                else:
+                    logger.warning("Unexpected cache format, ignoring")
             
         logger.info(f"RAG query: {question[:80]}...")
         question_embedding = await self.embedder.get_embedding(question)
 
-        matches = self.vector.query(question_embedding, top_k=top_k)
+
+        matches = await asyncio.to_thread(
+            self.vector.query, question_embedding, top_k=top_k
+        )
 
         if not matches:
             return {
@@ -73,7 +83,7 @@ class RAGService:
                 "cached": False
             }
         context, sources = self._build_context(matches)
-        answer = self._generate_answer(question, context)
+        answer = await self._generate_answer(question, context)
 
         result = {
             "answer": answer,
@@ -82,11 +92,14 @@ class RAGService:
             "cached": False
         }
         if self.redis:
-            await self.redis.set(
-                cache_key,
-                result,
-                ttl=settings.CACHE_TTL_RAG
-            )
+            try:
+                await self.redis.set(
+                    cache_key,
+                    result,
+                    ttl=settings.CACHE_TTL_RAG
+                )
+            except Exception as e:
+                logger.warning(f"Redis SET failed for RAG answer: {e}")
             logger.info("RAG answer cached in Redis")
 
         return result
@@ -125,7 +138,7 @@ class RAGService:
         context = "\n\n---\n\n".join(context_parts)
         return context, sources
         
-    def _generate_answer(self, question: str, context: str) -> str:
+    async def _generate_answer(self, question: str, context: str) -> str:
         """
         Call Azure OpenAI GPT-4 with the question and retrieved context.
         Returns the generated answer string.
@@ -140,7 +153,7 @@ Question: {question}
 
 Answer based only on the context above:"""
         logger.info(f"Calling Azure OpenAI ({self.deployment}) for RAG answer")
-        response = self.client.chat.completions.create(
+        response = await self.client.chat.completions.create(
             model=self.deployment,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},

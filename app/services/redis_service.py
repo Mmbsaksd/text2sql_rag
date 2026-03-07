@@ -1,6 +1,6 @@
 import logging
 logger = logging.getLogger("app")
-
+from urllib.parse import quote
 import httpx
 import json
 from app.config import settings
@@ -34,23 +34,20 @@ class RedisService:
         
     async def set(self, key: str, value, ttl: int = None):
         try:
-            serialized = json.dumps(value)
+            serialized = quote(json.dumps(value))
             headers= {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
+            "Authorization": f"Bearer {self.token}"
         }
             async with httpx.AsyncClient(timeout=5.0) as client:
                 if ttl:
-                    response = await client.post(
-                        f"{self.url}/set/{key}/ex/{ttl}",
+                    response = await client.get(
+                        f"{self.url}/set/{key}?value={serialized}&ex={ttl}",
                         headers=headers,
-                        content=serialized 
                     )
                 else:
-                    response = await client.post(
-                        f"{self.url}/set/{key}",
+                    response = await client.get(
+                        f"{self.url}/set/{key}?value={serialized}",
                         headers=headers,
-                        content=serialized 
                     )
                 return response.status_code == 200
         except Exception as e:

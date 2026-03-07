@@ -1,14 +1,14 @@
 import hashlib
 import json
 import logging
-from openai import AzureOpenAI
+from openai import AsyncAzureOpenAI
 from app.config import settings
 
 logger = logging.getLogger("app")
 
 class EmbeddingService:
     def __init__(self, redis_service=None):
-        self.client = AzureOpenAI(
+        self.client = AsyncAzureOpenAI(
             api_key=settings.AZURE_OPENAI_API_KEY,
             azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
             api_version=settings.AZURE_OPENAI_API_VERSION
@@ -41,9 +41,14 @@ class EmbeddingService:
         Checks Redis cache first — if found, returns instantly.
         If not found, calls Azure OpenAI and caches the result.
         """
+        cache_key = self._make_cache_key(text)
+        cached = None
+
         if self.redis:
-            cache_key = self._make_cache_key(text)
-            cached = await self.redis.get(cache_key)
+            try:
+                cached = await self.redis.get(cache_key)
+            except Exception as e:
+                logger.warning("Redis GET failed, skipping cache")
 
             if cached is not None:
                 logger.info(f"Embedding cache HIT for key {cache_key[:30]}...")
@@ -52,7 +57,7 @@ class EmbeddingService:
 
                     
         logger.info("Embedding cache MISS- calling Azure OpenAI")
-        response = self.client.embeddings.create(
+        response = await self.client.embeddings.create(
             input=text,
             model=self.deployment
         )
@@ -92,7 +97,7 @@ class EmbeddingService:
 
         if uncached_texts:
             logger.info(f"Fetching {len(uncached_texts)} embeddings from Azure OpenAI")
-            response = self.client.embeddings.create(
+            response = await self.client.embeddings.create(
                 input=uncached_texts,
                 model=self.deployment,
             )

@@ -33,7 +33,7 @@ class PineconeService:
             return 0
         
         response = self.index.upsert(vectors=vectors)
-        count = response.get("upserted_count",len(vectors))
+        count = getattr(response, "upserted_count", len(vectors))
         logger.info(f"Upserted{count} vector to Pinecone")
         return count
     
@@ -52,7 +52,7 @@ class PineconeService:
             top_k=top_k,
             include_metadata=True,
         )
-        matches = response.get("matches",[])
+        matches = getattr(response, "matches", [])
         logger.info(f"Pinecone query returned {len(matches)} matches")
         return matches
     
@@ -92,8 +92,8 @@ class PineconeService:
         try:
             stats = self.index.describe_index_stats()
             return{
-                "total_vectors": stats.get("total_vector_count", 0),
-                "dimension": stats.get("dimension", 0),
+                "total_vectors": getattr(stats, "total_vector_count", 0),
+                "dimension": getattr(stats, "dimension", 0),
                 "index_name": settings.PINECONE_INDEX_NAME
             }
         except Exception as e:
