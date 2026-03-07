@@ -1,4 +1,5 @@
-from asyncio.log import logger
+import logging
+logger = logging.getLogger("app")
 
 import httpx
 import json
@@ -10,7 +11,7 @@ class RedisService:
         self.token = settings.UPSTASH_REDIS_REST_TOKEN
 
     async def get(self, key: str):
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(
                 f"{self.url}/get/{key}",
                 headers={"Authorization": f"Bearer {self.token}"}
@@ -25,7 +26,11 @@ class RedisService:
 
             if value is None:
                 return None
-            return json.loads(value)
+            result =  json.loads(value)
+            if isinstance(result, str):
+                result = json.loads(result)
+            
+            return result
         
     async def set(self, key: str, value, ttl: int = None):
         try:
@@ -34,7 +39,7 @@ class RedisService:
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"
         }
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=5.0) as client:
                 if ttl:
                     response = await client.post(
                         f"{self.url}/set/{key}/ex/{ttl}",
@@ -53,7 +58,7 @@ class RedisService:
             return False
 
     async def health_check(self):
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(
                 f"{self.url}/ping",
                 headers={"Authorization": f"Bearer {self.token}"}
