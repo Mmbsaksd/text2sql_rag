@@ -16,10 +16,24 @@ class EmbeddingService:
         self.deployment = settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME
         self.redis = redis_service
 
-    def _make_cache_key(self, text: str) -> str:
-        """Create a unique Redis cache key from the text content."""
-        text_hash = hashlib.sha256(text.encode()).hexdigest()
-        return f"embedding:{text_hash}"
+    def _coerce_cached_embedding(self, cached) -> list[float]:
+        # Redis may return legacy bad payload: ['[...numbers...]', 'EX', 604800]
+        if isinstance(cached, str):
+            cached = json.loads(cached)
+
+        if (
+            isinstance(cached, list)
+            and len(cached) >= 1
+            and isinstance(cached[0], str)
+            and cached[0].startswith("[")
+        ):
+            cached = json.loads(cached[0])
+
+        if not isinstance(cached, list):
+            raise ValueError("Invalid cached embedding format")
+
+        return [float(v) for v in cached]
+
     
     async def get_embedding(self, text: str)-> list[float]:
         """
@@ -34,10 +48,8 @@ class EmbeddingService:
             if cached is not None:
                 logger.info(f"Embedding cache HIT for key {cache_key[:30]}...")
 
-                if isinstance(cached, str):
-                    cached = json.loads(cached)
+                return self._coerce_cached_embedding(cached)
 
-                return [float(v) for v in cached]
                     
         logger.info("Embedding cache MISS- calling Azure OpenAI")
         response = self.client.embeddings.create(
@@ -71,7 +83,8 @@ class EmbeddingService:
                 cache_key = self._make_cache_key(text)
                 cached = await self.redis.get(cache_key)
                 if cached is not None:
-                    embeddings.append([float(v) for v in cached])
+                    embeddings.append(self._coerce_cached_embedding(cached))
+
                     continue
             embeddings.append(None)
             uncached_texts.append(text)
@@ -98,3 +111,8 @@ class EmbeddingService:
                     f"({len(uncached_texts)} from AOI, "
                     f"{len(texts)-len(uncached_texts)} from cache")
         return embeddings
+    
+    def _make_cache_key(self, text: str) -> str:
+        text_hash = hashlib.sha256(text.encode()).hexdigest()
+        return f"embedding:v2:{text_hash}"
+
