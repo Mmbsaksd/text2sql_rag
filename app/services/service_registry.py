@@ -7,5 +7,6 @@ class ServiceRegistry:
         self.embeddings=None
         self.documents=None
         self.rag = None
+        self.sql_generator=None
 
 registry=ServiceRegistry()

@@ -11,6 +11,7 @@ from app.services.embedding_service import EmbeddingService
 from app.services.document_service import DocumentService   
 from app.services.chunking_service import ChunkingService
 from app.services.rag_service import RAGService
+from app.services.sql_generation_service import SQLGenerationService
 
 logger = setup_logging()
 
@@ -60,6 +61,11 @@ async def startup_event():
         redis_service=registry.cache
     )
     logger.info("RAG service ready")
+
+    registry.sql_generator = SQLGenerationService(
+        registry.rag
+    )
+    logger.info("SQL Generator service ready")
 
     logger.info("Application startup complete")
 
@@ -195,4 +201,11 @@ async def test_rag():
         question=question,
         top_k=3
     )
+    return result
+
+@app.post("/test/sql")
+async def test_sql():
+    question = "What is the total revenue?"
+    result = await registry.sql_generator.generate_sql(question)
+
     return result
