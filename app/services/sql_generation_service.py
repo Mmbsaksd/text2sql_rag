@@ -47,7 +47,7 @@ Generate SQL:
         response = await self.client.chat.completions.create(
             model=self.deployment,
             messages=[
-                {"role": "system", "context":SYSTEM_PROMPT},
+                {"role": "system", "content":SYSTEM_PROMPT},
                 {"role": "user", "content": prompt}
             ],
             temperature=0,
