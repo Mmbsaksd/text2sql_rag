@@ -100,6 +100,23 @@ def chunk_with_hybrid(doc, max_tokens: int =512, min_tokens: int =256) -> List[D
         )
 
         logger.info(f"Chunking with HybridChunker (max_tokens={max_tokens}, merge_peers=True)")
+
+        raw_chunks = list(chunker.chunk(dl_doc=doc))
+
+        logger.info(f"Generated {len(raw_chunks)} raw semantic chunks, merging to target {min_tokens}-{max_tokens} tokens")
+
+        merged_chunks = []
+        current_merged = None
+
+        for chunk in raw_chunks:
+            token_count = len(tiktoken_encoder.encode(chunk.text))
+
+            if current_merged is None:
+                current_merged = chunk
+            else:
+                current_tokens = len(tiktoken_encoder.encode(current_merged.text))
+                combined_tokens = current_tokens + token_count
+
     except Exception as e:
         logger.error(f"HybridChunker failed: {str(e)}")
         raise Exception(f"Failed to chunk document with HybridChunker: {str(e)}")
