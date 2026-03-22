@@ -117,6 +117,126 @@ def chunk_with_hybrid(doc, max_tokens: int =512, min_tokens: int =256) -> List[D
                 current_tokens = len(tiktoken_encoder.encode(current_merged.text))
                 combined_tokens = current_tokens + token_count
 
+                if current_tokens < min_tokens and combined_tokens < max_tokens:
+                    current_merged.text = current_merged.text + "\n\n"+ chunk.text
+
+                    if chunk.meta and chunk.meta.headings:
+                        if not current_merged.meta.headings:
+                            current_merged.meta.headings = []
+                        
+                        for h in chunk.meta.headings:
+                            if h not in current_merged.meta.headings:
+                                current_merged.meta.headings.append(h)
+                    
+                    if chunk.meta and chunk.meta.origin and hasattr(chunk.meta.origin, 'page_numbers'):
+                        if chunk.meta.origin.page_numbers:
+                            if not hasattr(current_merged.meta.origin, 'page_numbers') or not current_merged.meta.origin.page_numbers:
+                                if current_merged.meta and current_merged.meta.origin:
+                                    current_merged.meta.origin.page_numbers = []
+                            
+                            if current_merged.meta and current_merged.meta.origin and current_merged.meta.origin.page_numbers is not None:
+                                for pn in chunk.meta.origin.page_numbers:
+                                    if pn not in current_merged.meta.origin.page_numbers:
+                                        current_merged.meta.origin.page_numbers.append(pn)
+                else:
+                    merged_chunks.append(current_merged)
+                    current_merged = chunk
+        if current_merged is not None:
+            merged_chunks.append(current_merged)
+
+        logger.info(f"After merging: {len(merged_chunks)} chunks (avg {sum(len(tiktoken_encoder.encode(c.text)) for c in merged_chunks) / len(merged_chunks):.1f} tokens)")
+
+        result = []
+        char_position = 0
+
+        for idx, chunk in enumerate(merged_chunks):
+            headings = []
+            if chunk.meta and chunk.meta.headings:
+                headings = [h.text for h in chunk.meta.headings if hasattr(h, 'text')]
+
+            page_numbers = []
+            if chunk.meta and chunk.meta.origin and hasattr(chunk.meta.origin, 'page_numbers'):
+                page_numbers = chunk.meta.origin.page_numbers or []
+
+            captions = []
+            if chunk.meta and hasattr(chunk.meta, 'captions') and chunk.meta.captions:
+                captions = [str(c) for c in chunk.meta.captions]
+
+            doc_items = []
+            if chunk.meta and hasattr(chunk.meta, 'doc_items') and chunk.meta.doc_items:
+                doc_items = [str(item)[:100] for item in chunk.meta.doc_items[:3]]
+
+            token_count = len(tiktoken_encoder.encode(chunk.text))
+
+            chunk_text = chunk.text
+            start_char = char_position
+            end_char = start_char + len(chunk_text)
+            char_position = end_char
+
+            chunk_data = {
+                'text': chunk_text,
+                'chunk_index': idx,
+                'token_count':token_count,
+                'start_char': start_char,
+                'end_char': end_char,
+                'headings': headings,
+                'page_numbers': page_numbers,
+                'doc_items': doc_items,
+                'captions': captions,
+            }
+            result.append(chunk_data)
+
+        if result:
+            first_chunk = result[0]
+            logger.info(f"Sample chunk metadata - Headings: {first_chunk['headings']}, Pages: {first_chunk['page_numbers']}")
+
+        return result
     except Exception as e:
         logger.error(f"HybridChunker failed: {str(e)}")
         raise Exception(f"Failed to chunk document with HybridChunker: {str(e)}")
+    
+def parse_and_chunk_document(file_path: str, chunk_size: int = 512, min_chunk_size: int = 256):
+    """
+    Parse and chunk document using Docling's context-aware approach.
+
+    This is the main entry point that replaces the old parse_document() + chunk_text() flow.
+
+    Args:
+        file_path: Path to the document file
+        chunk_size: Maximum tokens per chunk (default: 512)
+        min_chunk_size: Minimum tokens per chunk - smaller chunks will be merged (default: 256)
+
+    Returns:
+        List of chunk dictionaries with rich metadata
+
+    Raises:
+        Exception: If both Docling and fallback fail
+    """
+
+    if not DOCLING_AVAILABLE:
+        logger.warning("Docling not available, cannot use context-aware chunking")
+        raise ImportError("Docling is required for context-aware chunking. Run: pip install docling docling-core")
+    
+    try:
+        doc = convert_document(file_path)
+        chunks = chunk_with_hybrid(doc, max_tokens=chunk_size, min_tokens=min_chunk_size)
+        logger.info(f"Successfully processed {Path(file_path).name}: {len(chunks)} chunks with context")
+        return chunks
+    
+    except Exception as e:
+        logger.error(f"Docling processing failed for {Path(file_path).name}: {str(e)}")
+        raise Exception(f"Failed to process document with Docling: {str(e)}")
+    
+def fallback_to_unstructured(file_path: str, chunk_size: int = 512)-> List[Dict[str, Any]]:
+    """
+    Fallback to Unstructured.io for documents Docling cannot handle.
+
+    This maintains compatibility but without context-aware chunking benefits.
+
+    Args:
+        file_path: Path to the document file
+        chunk_size: Maximum tokens per chunk
+
+    Returns:
+        List of chunk dictionaries (without rich metadata)
+    """
