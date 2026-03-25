@@ -240,3 +240,40 @@ def fallback_to_unstructured(file_path: str, chunk_size: int = 512)-> List[Dict[
     Returns:
         List of chunk dictionaries (without rich metadata)
     """
+    logger.warning(f"Using Unstructured.io fallback for {Path(file_path).name}")
+
+    try:
+        from app.services.document_service import parse_document, chunk_text
+        text = parse_document(file_path)
+        chunks = chunk_text(text, chunk_size=chunk_size, overlap=50)
+
+        for chunk in chunks:
+            chunk['headings'] = []
+            chunk['page_numbers'] = []
+            chunk['doc_items'] = []
+            chunk['captions'] = []
+
+        logger.info(f"Fallback chunking complete: {len(chunks)} chunks (no context)")
+
+        return chunks
+    except Exception as e:
+        logger.error(f"Fallback also failed: {str(e)}")
+        raise Exception(f"Both Docling and Unstructured failed: {str(e)}")
+    
+
+def get_docling_status() -> Dict[str, Any]:
+    """
+    Check if Docling is available and functioning.
+
+    Returns:
+        Dictionary with status information
+    """
+    return {
+        "docling_available": DOCLING_AVAILABLE,
+        "features": {
+            "context_aware_chunking": DOCLING_AVAILABLE,
+            "heading_preservation": DOCLING_AVAILABLE,
+            "table_structure": DOCLING_AVAILABLE,
+            "layout_analysis": DOCLING_AVAILABLE
+        }
+    }
