@@ -116,17 +116,23 @@ class EmbeddingService:
                             ttl=ttl, 
                             cache_type="embedding"
                         )
+                    total = cache_hits + cache_misses
+                    hit_rate = (cache_hits / total * 100) if total > 0 else 0
 
-                    logger.debug(f"Embedding cache: {cache_hits} hits, {cache_misses} misses "
-                               f"({cache_hits/(cache_hits+cache_misses)*100:.1f}% hit rate)")
+                    logger.debug(
+                         f"Embedding cache: {cache_hits} hits, {cache_misses} misses ({hit_rate:.1f}% hit rate)"
+                    )
                     
-                    user_info = {
-                        "prompt_tokens": response.usage.prompt_tokens,
-                        "total_tokens": response.usage.total_tokens,
-                        "model": self.model,
-                        "cache_hits": cache_hits,
-                        "cache_misses": cache_misses,
-                    }if hasattr(response, 'usage') and response.usage else{
+                    if hasattr(response, 'usage') and response.usage 
+                        user_info = {
+                            "prompt_tokens": response.usage.prompt_tokens,
+                            "total_tokens": response.usage.total_tokens,
+                            "model": self.model,
+                            "cache_hits": cache_hits,
+                            "cache_misses": cache_misses,
+                        }
+                    else:
+                        user_info = {
                         "cache_hits": cache_hits,
                         "cache_misses": cache_misses,
                     }
