@@ -123,7 +123,7 @@ class EmbeddingService:
                          f"Embedding cache: {cache_hits} hits, {cache_misses} misses ({hit_rate:.1f}% hit rate)"
                     )
                     
-                    if hasattr(response, 'usage') and response.usage 
+                    if hasattr(response, 'usage') and response.usage:
                         user_info = {
                             "prompt_tokens": response.usage.prompt_tokens,
                             "total_tokens": response.usage.total_tokens,
