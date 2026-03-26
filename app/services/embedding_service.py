@@ -21,6 +21,7 @@ class EmbeddingService:
             query_cache_service: Optional QueryCacheService for embedding caching
         """
         self.use_azure = settings.USE_AZURE_OPENAI
+        self.dimensions = 1536
         self.query_cache_service = query_cache_service
 
         if self.use_azure:
@@ -30,7 +31,7 @@ class EmbeddingService:
             self.model = settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME
             self.dimensions = 1536
 
-            if not all([self.api_key, self.endpoint, self.model]):
+            if not all([self.api_key, self.endpoint, self.model, self.api_version]):
                 raise ValueError(
                     "Azure OpenAI config missing. Required: AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_EMBEDDING_DEPLOYMENT"
                 )
@@ -45,15 +46,8 @@ class EmbeddingService:
                 raise ValueError(
                     "OpenAI API key is required. Set OPENAI_API_KEY in .env file."
                 )
-            
-        self.client = AsyncAzureOpenAI(
-            api_key=self.api_key,
-            azure_endpoint=self.endpoint,
-            api_version=self.api_version
-        )
-        self.model = settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME
-        self.dimensions = 1536
-        self.query_cache_service = query_cache_service
+            self.client = AsyncOpenAI(api_key=self.api_key)
+            self.model = "text-embedding-3-small"
 
     async def generate_embeddings(self, texts: List[str]) -> Tuple[List[List[float]], Optional[Dict]]:
         """
@@ -88,7 +82,7 @@ class EmbeddingService:
             for i, text in enumerate(texts):
                 cache_key = self.query_cache_service.get_embedding_key(text)
                 cached = self.query_cache_service.get(cache_key)
-                if cached and "embeddings" in cached:
+                if cached is not None and "embeddings" in cached:
                     embeddings.append(cached["embeddings"])
                     cache_hits +=1
                 else:
@@ -111,12 +105,17 @@ class EmbeddingService:
 
                         cache_key = self.query_cache_service.get_embedding_key(texts[idx])
                         cache_value = {
-                            "embedding": embedding,
+                            "embeddings": embedding,
                             "model": self.model,
                             "text_length": len(texts[idx])
                         }
                         ttl = settings.CACHE_TTL_EMBEDDINGS
-                        self.query_cache_service.set(cache_key, cache_value, ttl=ttl, cache_type="embedding")
+                        self.query_cache_service.set(
+                            cache_key,
+                            cache_value, 
+                            ttl=ttl, 
+                            cache_type="embedding"
+                        )
 
                     logger.debug(f"Embedding cache: {cache_hits} hits, {cache_misses} misses "
                                f"({cache_hits/(cache_hits+cache_misses)*100:.1f}% hit rate)")
