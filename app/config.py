@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     AZURE_OPENAI_API_VERSION: str
     AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME: str
 
+    USE_AZURE_OPENAI: bool = False
+
+
+    # =========================
+    # AZURE OPENAI
+    # =========================
+    OPENAI_API_KEY: str | None = None
+
     # =========================
     # PINECONE
     # =========================
