@@ -48,7 +48,7 @@ class VectorService:
                     metric="cosine",
                     spec=ServerlessSpec(
                         cloud="aws",
-                        region=self.environment.split("-")[0]
+                        region = self.environment.replace("-aws", "")
                     )
                 )
                 logger.info(f"Index {self.index_name} created successfully")
@@ -81,7 +81,7 @@ class VectorService:
         """
 
         if not self.index:
-            self.connect_to_index
+            self.connect_to_index()
 
         if len(chunks) != len(embeddings):
             raise ValueError(f"Mismatch: {len(chunks)} chunks but {len(embeddings)} embeddings")
@@ -102,7 +102,7 @@ class VectorService:
                     "page_numbers": json.dumps(chunk.get("page_numbers",[])),
                     "has_context": len(chunk.get("headings",[]))> 0,
                 }
-                vector_to_upsert.append(vector_id, embedding, metadata)
+                vector_to_upsert.append((vector_id, embedding, metadata))
 
             batch_size = 100
             for i in range(0, len(vector_to_upsert), batch_size):
@@ -152,7 +152,7 @@ class VectorService:
             chunks = []
             for match in results['matches']:
                 chunks.append({
-                    'id':match,
+                    'id':match['id'],
                     'score': match['score'],
                     'text': match['metadata'].get('text',''),
                     'metadata': {
@@ -201,7 +201,7 @@ class VectorService:
             namespace: Namespace containing the vectors
         """
         if not self.index:
-            self.connect_to_index
+            self.connect_to_index()
         try:
             self.index.delete(
                 filter={"filename": {"$eq": filename}},
@@ -239,13 +239,13 @@ class VectorService:
         try:
             if namespace == "*":
                 stats = self.get_index_stats()
-                namespaces_to_clear = list(stats.get('namespace',{}).keys())
+                namespaces_to_clear = list(stats.get('namespaces',{}).keys())
 
                 if not namespaces_to_clear:
                     logger.info("No namespaces found to clear")
                     return {
                         'status': 'success',
-                        'namespace_cleared': [],
+                        'namespaces_cleared': [],
                         'message': 'No vectors found in index'
                     }
                 for ns in namespaces_to_clear:
