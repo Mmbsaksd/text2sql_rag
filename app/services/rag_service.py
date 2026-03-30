@@ -21,7 +21,7 @@ class RAGService:
             api_key: OpenAI API key (optional, uses settings if not provided)
             query_cache_service: Optional QueryCacheService for response caching
         """
-        self.api_key = api_key or settings.OPENAI_API_KEY
+        self.api_key = api_key or settings.AZURE_OPENAI_API_KEY
         if not self.api_key:
             raise ValueError("Azure OpenAI API key is required. Set AZURE_OPENAI_API_KEY in .env file.")
         self.embedding_service = EmbeddingService(
@@ -37,7 +37,7 @@ class RAGService:
         self.query_cache_service = query_cache_service
         self.model = settings.AZURE_OPENAI_DEPLOYMENT_NAME
         self.temperature = 0.1
-        self.max_token = 1000
+        self.max_tokens = 1000
 
     async def generate_answer(
             self,
@@ -174,7 +174,31 @@ class RAGService:
         Returns:
             Formatted context string with heading hierarchy
         """
-        pass
+        import json
+        context_parts = []
+
+        for i, chunk in enumerate(chunks,1):
+            filename = chunk['metadata'].get('filename', 'unknown')
+            text = chunk.get('text','')
+            score = chunk.get('score',0.0)
+
+            headings_json = chunk["metadata"].get('headings','[]')
+            try:
+                headings = json.loads(headings_json) if isinstance(headings_json, str) else headings
+            except (json.JSONDecodeError, TypeError):
+                headings = []
+
+            if headings and len(headings)>0:
+                heading_context = " > ".join(headings)
+                context_part = f"[Source {i}: {filename} (relevance: {score:.3f})]\n[Section: {heading_context}]\n{text}\n"
+            else:
+                context_part = f"[Source {i}: {filename} (relevance: {score:.3f})]\n{text}"
+            
+            context_parts.append(context_part)
+        
+        return "\n".join(context_parts)
+    
+
 
     def _create_prompt(self, question: str, context: str)-> str:
         """
@@ -187,7 +211,18 @@ class RAGService:
         Returns:
             Formatted prompt string
         """
-        pass
+        prompt = f"""You are a helpful assistant. Answer the question based on the provided context.
+
+If the context doesn't contain enough information to answer the question, say "I don't have enough information to answer that based on the provided documents."
+
+Context:
+{context}
+
+Question: {question}
+
+Answer:"""
+        return prompt
+
 
     def _format_sources(self, chunks: List[Dict[str, Any]])-> List[Dict[str, Any]]:
         """
@@ -199,3 +234,50 @@ class RAGService:
         Returns:
             List of source dictionaries
         """
+        sources = []
+
+        for chunk in chunks:
+            sources.append(
+                {
+                    "filename": chunk['metadata'].get('filename', 'Unknown'),
+                    "chunk_index": chunk['metadata'].get('chunk_index',0),
+                    "relevance_score": chunk.get('score',0.0),
+                    "preview": chunk.get('text','')[:200]+"..."
+                }
+            )
+        return sources
+    
+    async def get_similar_chunks(
+            self,
+            question: str,
+            top_k: int = 5,
+            namespace: str = "default",
+    )-> Dict[str, Any]:
+        """
+        Retrieve similar chunks without generating an answer.
+        Useful for debugging or showing what documents were found.
+
+        Args:
+            question: Query text
+            top_k: Number of chunks to retrieve
+            namespace: Pinecone namespace
+
+        Returns:
+            Dictionary with retrieved chunks and metadata
+        """
+        try:
+            query_embedding = await self.embedding_service.generate_single_embedding(question)
+
+            search_result = await self.vector_service.search(
+                query_embedding=query_embedding,
+                top_k=top_k,
+                namespace=namespace
+            )
+            return {
+                "question": question,
+                "chunks": search_result["chunks"],
+                "total_found": search_result['total_found']
+            }
+
+        except Exception as e:
+            raise Exception(f"Failed to retrieve similar chunks: {str(e)}")
