@@ -292,6 +292,8 @@ class TextToSQLService:
         Raises:
             ValueError: If required credentials are missing
         """
+        self.database_url = database_url or settings.DATABASE_URL
+        self.query_cache_service = query_cache_service
         self.azure_api_key = azure_api_key or settings.AZURE_OPENAI_API_KEY
         self.azure_endpoint = azure_endpoint or settings.AZURE_OPENAI_ENDPOINT
         self.azure_deployment = azure_deployment or settings.AZURE_OPENAI_DEPLOYMENT
@@ -304,3 +306,227 @@ class TextToSQLService:
 
         if not self.azure_deployment:
             raise ValueError("AZURE_OPENAI_DEPLOYMENT is required")
+        
+        pinecone_key = settings.PINECONE_API_KEY if PINECONE_AVAILABLE else None
+        self.vanna = VannaAgentWrapper(
+            azure_api_key=self.azure_api_key,
+            azure_endpoint=self.azure_endpoint,
+            azure_deployment = self.azure_deployment,
+            database_url=self.database_url,
+            pinecone_api_key=pinecone_key
+        )
+        
+        self.pending_queries: Dict[str, Dict[str, Any]] = {}
+        self.is_trained = False
+        self.schema_context = ""
+
+    def complete_traning(self):
+        """
+        Prepare schema context for Vanna 2.0.
+        Note: Vanna 2.0 Agent doesn't use the same training approach as legacy Vanna.
+        Instead, we provide schema context with each query.
+        """
+        logger.info("Preparing schema context for Vanna 2.0...")
+        self.schema_context = self._build_schema_context()
+        self.is_trained = True
+        logger.info("✓ Schema context prepared for Vanna 2.0 Agent!")
+
+    def _build_schema_context(self):
+        """
+        Build comprehensive schema context by querying database.
+        Provides same information as legacy Vanna training.
+
+        Returns:
+            Formatted schema documentation string
+        """
+        schema_parts = []
+        schema_parts.append("DATABASE SCHEMA DOCUMENTATION")
+        schema_parts.append("="* 60)
+
+        documentation = """
+This is an e-commerce database with three main tables:
+- customers: Contains customer information including name, email, segment (SMB, Enterprise, Individual), and country
+- products: Product catalog with name, category, price, stock quantity, and description
+- orders: Customer orders with order date, total amount, status (Pending, Delivered, Cancelled, Processing), and shipping address
+
+The customers table has a one-to-many relationship with orders (one customer can have many orders).
+
+IMPORTANT NOTES:
+- For order revenue/pricing, use orders.total_amount (NOT 'price')
+- Customer segments: 'SMB', 'Enterprise', 'Individual' (case-sensitive)
+- Order statuses: 'Pending', 'Delivered', 'Cancelled', 'Processing' (case-sensitive)
+- To join customers and orders: JOIN orders ON customers.id = orders.customer_id
+"""
+
+        schema_parts.append(documentation)
+
+        schema_parts.append("\nTABLE SCHEMAS:")
+        schema_parts.append("-" * 60)
+
+
+        schema_parts.append("""
+Table: customers
+Columns:
+  - id (SERIAL PRIMARY KEY)
+  - name (VARCHAR) - Customer full name
+  - email (VARCHAR) - Customer email address
+  - segment (VARCHAR) - One of: 'SMB', 'Enterprise', 'Individual'
+  - country (VARCHAR) - Customer country
+  - created_at (TIMESTAMP)
+  - updated_at (TIMESTAMP)
+""")
+
+        schema_parts.append("""
+Table: products
+Columns:
+  - id (SERIAL PRIMARY KEY)
+  - name (VARCHAR) - Product name
+  - category (VARCHAR) - Product category (Electronics, Software, Hardware, etc.)
+  - price (DECIMAL) - Product unit price
+  - stock_quantity (INT) - Current inventory count
+  - description (TEXT)
+  - created_at (TIMESTAMP)
+  - updated_at (TIMESTAMP)
+""")
+
+        schema_parts.append("""
+Table: orders
+Columns:
+  - id (SERIAL PRIMARY KEY)
+  - customer_id (INT) - Foreign key to customers.id
+  - order_date (DATE) - Date of order
+  - total_amount (DECIMAL) - TOTAL ORDER PRICE (use this for revenue, NOT 'price'!)
+  - status (VARCHAR) - One of: 'Pending', 'Delivered', 'Cancelled', 'Processing'
+  - shipping_address (TEXT)
+  - created_at (TIMESTAMP)
+  - updated_at (TIMESTAMP)
+""")
+        
+        schema_parts.append("\nEXAMPLE QUERIES:")
+        schema_parts.append("-" * 60)
+
+        examples = [
+            ("How many customers do we have?", "SELECT COUNT(*) as customer_count FROM customers;"),
+            ("What is the total revenue from all orders?", "SELECT SUM(total_amount) as total_revenue FROM orders;"),
+            ("List all delivered orders", "SELECT * FROM orders WHERE status = 'Delivered' ORDER BY order_date DESC;"),
+            ("How many orders per customer segment?", "SELECT c.segment, COUNT(o.id) as order_count FROM customers c LEFT JOIN orders o ON c.id = o.customer_id GROUP BY c.segment;"),
+            ("Top 10 customers by total spending", "SELECT c.name, c.email, SUM(o.total_amount) as total_spent FROM customers c JOIN orders o ON c.id = o.customer_id GROUP BY c.id, c.name, c.email ORDER BY total_spent DESC LIMIT 10;"),
+        ]
+        for i, (question, sql) in enumerate(examples, 1):
+            schema_parts.append(f"\nExample {i}:")
+            schema_parts.append(f"Question: {question}")
+            schema_parts.append(f"SQL: {sql}")
+
+        return "\n".join(schema_parts)
+
+    async def generate_sql_for_approval(self, question: str) -> Dict[str, Any]:
+        """
+        Generate SQL from a natural language question using Vanna 2.0 Agent.
+        Returns SQL for user approval before execution.
+
+        NEW: Implements SQL generation caching to save ~$0.08 per cache hit.
+        - Cache key: hash(question)
+        - Cache TTL: 24 hours (schema relatively stable)
+        - Falls back to uncached if Redis unavailable
+
+        Args:
+            question: Natural language question
+
+        Returns:
+            Dictionary with query_id, question, SQL, status, and cache_hit indicator
+
+        Raises:
+            Exception: If schema context not prepared or SQL generation fails
+        """
+        if not self.is_trained:
+            raise Exception("Schema context not prepared. Call complete_training() first.")
+        
+        if self.query_cache_service and self.query_cache_service.enabled:
+            cache_key = self.query_cache_service.get_sql_gen_key(question)
+            cache_result = self.query_cache_service.get(cache_key, cache_type="sql_gen")
+
+            if cache_result and "sql" in cache_result:
+                logger.info(f"SQL generation cache HIT for question: '{question[:50]}...'")
+
+                query_id = str(uuid.uuid4())
+
+                self.pending_queries[query_id] = {
+                    "question": question,
+                    'sql': cache_result["sql"],
+                    'status': 'pending_approval',
+                    'generated_at': pd.Timestamp().isoformat(),
+                    'cache_hit': True
+                }
+
+                return {
+                    'query_id': query_id,
+                    'question': question,
+                    'sql': cache_result["sql"],
+                    'explanation': cache_result.get("explanation","This SQL will retrieve data from your database. Please review before approving."),
+                    'status': 'pending_approval',
+                    'cache_hit': True,
+                    'cost_saved': "$0.08"
+                }
+            
+        try:
+            sql = await self.vanna.generate_sql_async(
+                question=question,
+                schema_context=self.schema_context
+            )
+            explanation = "This SQL will retrieve data from your database. Please review before approving."
+            if self.query_cache_service and self.query_cache_service.enabled:
+                cache_key = self.query_cache_service.get_sql_gen_key(question)
+                cache_value = {
+                    "sql": sql,
+                    "explanation": explanation,
+                    "question": question
+                }
+                ttl = settings.CACHE_TTL_SQL_GEN
+                self.query_cache_service.set(cache_key, cache_value, ttl=ttl, cache_type="sql_gen")
+                logger.info(f"SQL generation cache MISS - cached for '{question[:50]}...' (TTL: {ttl}s)")
+
+                query_id = str(uuid.uuid4)
+
+                self.pending_queries[query_id]={
+                    "question": question,
+                    'sql':sql,
+                    'status':'pending_approval',
+                    'generated_at': pd.Timestamp.isoformat(),
+                    'cache_hit': False,
+                    'cost_saved': "$0.00"
+                }
+
+        except Exception as e:
+            raise Exception(f"Failed to generate SQL: {str(e)}")
+        
+    async def execute_approved_query(self, query_id: str, approved: bool)-> Dict[str, Any]:
+        """
+        Execute a SQL query after user approval using Vanna 2.0 Agent.
+
+        NEW: Implements SQL result caching for SELECT queries.
+        - Cache key: hash(normalized_sql)
+        - Cache TTL: 15 minutes (data changes frequently)
+        - Only caches read-only SELECT queries
+
+        Args:
+            query_id: ID of the pending query
+            approved: Whether the user approved execution
+
+        Returns:
+            Dictionary with results or rejection message, plus cache_hit indicator
+        """
+        if query_id not in self.pending_queries:
+            return {
+                'error': "query ID not found",
+                'status': 'error'
+            }
+        query_info = self.pending_queries[query_id]
+        if not approved:
+            del self.pending_queries[query_id]
+            return {
+                'query_id': query_id,
+                'status': 'rejected',
+                'message': 'Query execution cancelled by user'
+            }
+        sql = query_info['sql']
+        
