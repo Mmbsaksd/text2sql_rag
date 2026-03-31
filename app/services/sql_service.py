@@ -14,7 +14,6 @@ from app.config import settings
 logger = logging.getLogger("rag_app.sql_service")
 
 from vanna import Agent
-from vanna.integrations.openai import OpenAILlmService
 from vanna.integrations.postgres import PostgresRunner
 from vanna.core.registry import ToolRegistry
 from vanna.tools import RunSqlTool
@@ -28,16 +27,18 @@ class AzureLlmService:
             api_version="2024-02-15-preview"
         )
         self.deployment = deployment
-    def _build_payload(self, request):
-        return {
-            "messages": request["messages"]
-        }
+
     async def generate(self, request):
-        response = self.client.chat.completions.create(
-            model=self.deployment,
-            messages=request["messages"],
-            temperature=settings.VANNA_TEMPERATURE,
-            top_p=settings.VANNA_TOP_P
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+             lambda: self.client.chat.completions.create(
+                model=self.deployment,
+                messages=request["messages"],
+                temperature=settings.VANNA_TEMPERATURE,
+                top_p=settings.VANNA_TOP_P,
+                max_tokens=settings.VANNA_MAX_TOKENS,
+             )
         )
         return response.choices[0].message.content
     
@@ -90,23 +91,7 @@ class VannaAgentWrapper:
             f"seed={settings.VANNA_SEED}"
         )
 
-        original_build_payload = self.llm._build_payload
 
-        def deterministic_build_payload(request):
-            """Wraps Vanna's _build_payload to add temperature, top_p, and seed."""
-            payload = original_build_payload(request)
-
-            payload['temperature'] = settings.VANNA_TEMPERATURE
-            payload['top_p'] = settings.VANNA_TOP_P
-            payload['seed'] = settings.VANNA_SEED
-
-            if settings.VANNA_MAX_TOKENS:
-                payload['max_tokens'] = settings.VANNA_MAX_TOKENS
-
-            logger.debug(f"SQL LLM payload: {payload}")
-            return payload
-        
-        self.llm._build_payload = deterministic_build_payload
 
         self.postgres_runner = PostgresRunner(
             connection_string=database_url
@@ -213,7 +198,7 @@ class VannaAgentWrapper:
         Raises:
             Exception: If SQL execution fails
         """
-        return await self._execute_and_extract_results(sql)
+        return  self._execute_and_extract_results(sql)
     
     def _execute_and_extract_results(self, sql: str)-> List[Dict[str, Any]]:
         """
@@ -320,7 +305,7 @@ class TextToSQLService:
         self.is_trained = False
         self.schema_context = ""
 
-    def complete_traning(self):
+    def complete_training(self):
         """
         Prepare schema context for Vanna 2.0.
         Note: Vanna 2.0 Agent doesn't use the same training approach as legacy Vanna.
@@ -438,6 +423,8 @@ Columns:
         Raises:
             Exception: If schema context not prepared or SQL generation fails
         """
+        query_id = str(uuid.uuid4())
+
         if not self.is_trained:
             raise Exception("Schema context not prepared. Call complete_training() first.")
         
@@ -448,13 +435,11 @@ Columns:
             if cache_result and "sql" in cache_result:
                 logger.info(f"SQL generation cache HIT for question: '{question[:50]}...'")
 
-                query_id = str(uuid.uuid4())
-
                 self.pending_queries[query_id] = {
                     "question": question,
                     'sql': cache_result["sql"],
                     'status': 'pending_approval',
-                    'generated_at': pd.Timestamp().isoformat(),
+                    'generated_at': pd.Timestamp.now().isoformat(),
                     'cache_hit': True
                 }
 
@@ -474,6 +459,7 @@ Columns:
                 schema_context=self.schema_context
             )
             explanation = "This SQL will retrieve data from your database. Please review before approving."
+
             if self.query_cache_service and self.query_cache_service.enabled:
                 cache_key = self.query_cache_service.get_sql_gen_key(question)
                 cache_value = {
@@ -485,16 +471,24 @@ Columns:
                 self.query_cache_service.set(cache_key, cache_value, ttl=ttl, cache_type="sql_gen")
                 logger.info(f"SQL generation cache MISS - cached for '{question[:50]}...' (TTL: {ttl}s)")
 
-                query_id = str(uuid.uuid4)
+            self.pending_queries[query_id]={
+                "question": question,
+                'sql':sql,
+                'status':'pending_approval',
+                'generated_at': pd.Timestamp.now().isoformat(),
+                'cache_hit': False,
+                'cost_saved': "$0.00"
+            }
+            return {
+                'query_id': query_id,
+                'question': question,
+                'sql': sql,
+                'explanation': explanation,
+                'status': 'pending_approval',
+                'cache_hit': False,
+                'cost_saved': "$0.00"
+            }
 
-                self.pending_queries[query_id]={
-                    "question": question,
-                    'sql':sql,
-                    'status':'pending_approval',
-                    'generated_at': pd.Timestamp.isoformat(),
-                    'cache_hit': False,
-                    'cost_saved': "$0.00"
-                }
 
         except Exception as e:
             raise Exception(f"Failed to generate SQL: {str(e)}")
@@ -529,4 +523,69 @@ Columns:
                 'message': 'Query execution cancelled by user'
             }
         sql = query_info['sql']
+        is_select_query = sql.strip().upper().startswith("SELECT")
+
+        if is_select_query and self.query_cache_service and self.query_cache_service.enabled:
+            cache_key = self.query_cache_service.get_sql_result_key(sql)
+            cache_result = self.query_cache_service.get(cache_key, cache_type="sql_result")
+
+            if cache_result and "results" in cache_result:
+                logger.info(f"SQL result cache HIT for query: '{sql[:50]}...'")
+
+                del self.pending_queries[query_id]
+                return {
+                    'query_id': query_id,
+                    'question': query_info['question'],
+                    'sql':sql,
+                    'results': cache_result['results'],
+                    'result_count': cache_result['result_count'],
+                    'status': 'executed',
+                    'cache_hit': True,
+                    'cache_at': cache_result.get("executed_at")
+                }
+        try:
+            results = await self.vanna.execute_sql_async(sql)
+            if is_select_query and self.query_cache_service and self.query_cache_service.enabled:
+                cache_key = self.query_cache_service.get_sql_result_key(sql)
+                cache_value = {
+                    "results": results,
+                    "sql": sql,
+                    "executed_at": pd.Timestamp.now().isoformat()
+                }
+                ttl = settings.CACHE_TTL_SQL_RESULT
+                self.query_cache_service.set(cache_key, cache_value, ttl=ttl, cache_type="sql_result")
+                logger.info(f"SQL result cache MISS - cached for '{sql[:50]}...' (TTL: {ttl}s)")
+
+            del self.pending_queries[query_id]
+
+            return {
+                'query_id': query_id,
+                'question': query_info['question'],
+                'sql': sql,
+                'results': results,
+                'result_count': len(results),
+                'status': 'executed',
+                'cache_hit': False
+            }
         
+        except Exception as e:
+            return {
+                'query_id': query_id,
+                'error': str(e),
+                "status": 'error'
+            }
+        
+    def get_pending_queries(self)-> List[Dict[str, Any]]:
+        """
+        Get list of all pending queries awaiting approval.
+
+        Returns:
+            List of pending query information
+        """
+        return [
+            {
+                'query_id': qid,
+                **info
+            }
+            for qid, info in self.pending_queries.items()
+        ]
