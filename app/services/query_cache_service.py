@@ -92,6 +92,9 @@ class QueryCacheService:
             return None
         try:
             result = self.client.get(key)
+            if isinstance(result, bytes):
+                result = result.decode("utf-8")
+
             if result is None:
                 self._record_miss(cache_type)
                 logger.debug(f"Cache MISS: {key}")
@@ -158,6 +161,8 @@ class QueryCacheService:
             
             deleted = 0
             for key in keys:
+                if isinstance(key, bytes):
+                    key = key.decode("utf-8")
                 self.client.delete(key)
                 deleted +=1
 
@@ -197,11 +202,21 @@ class QueryCacheService:
         """Generate cache key for RAG response."""
         question_hash = self._compute_hash(question.lower())
         return f"rag:{question_hash}:{top_k}"
+
+    def get_sql_gen_key(self, question: str, top_k: int)-> str:
+        """Generate cache key for SQL generation."""
+        question_hash = self._compute_hash(question.lower())
+        return f"sql_gen:{question_hash}"
     
+    def get_sql_result_key(self, sql_query: str)-> str:
+        """
+        Generate cache key for SQL result.
 
-
-
-
+        Normalizes SQL (removes extra whitespace, lowercase) for better cache hits.
+        """
+        normalized_sql = " ".join(sql_query.strip().lower().split())
+        sql_hash = self._compute_hash(normalized_sql)
+        return f"sql_result:{sql_hash}"
 
     # ==================== Statistics Tracking ====================
     def _record_hit(self, cache_type: str):
@@ -214,3 +229,48 @@ class QueryCacheService:
         """Record cache miss for statistics."""
         if cache_type in self.stats:
             self.stats[cache_type]["misses"] +=1
+
+    def get_stats(self)-> Dict:
+        """
+        Get cache hit/miss statistics.
+
+        Returns:
+            Dictionary with hit rates for each cache type
+        """
+        stats_with_rates = {}
+        for cache_type, counts in self.stats.items():
+            total = counts["hits"] + counts["misses"]
+            hit_rate = (counts["hits"]/total * 100) if total > 0 else 0
+            stats_with_rates[cache_type] = {
+                "hits": counts["hits"],
+                "misses": counts["misses"],
+                "total_queries": total,
+                "hit_rate": f"{hit_rate:.1f}%",
+            }
+        
+        return {
+            "enabled": self.enabled,
+            "cache_types": stats_with_rates
+        }
+    def reset_stats(self):
+        """Reset statistics counters."""
+        for cache_type in self.stats:
+            self.stats[cache_type] =  {"hits": 0, "misses": 0}
+        logger.info("Cache statistics reset")
+
+    # ==================== Health Check ====================
+
+    def health_check(self)-> Dict:
+        """
+        Check Redis connection health.
+
+        Returns:
+            Status dictionary
+        """
+        if not self.enabled:
+            return {"status": "disabled", "message": "Redis cache not configured"}
+        try:
+            self.client.ping()
+            return {"status": "healthy", "message": "Redis connection OK"}
+        except Exception as e:
+            return {"status": "unhealthy", "message": f"Redis error: {str(e)}"}
