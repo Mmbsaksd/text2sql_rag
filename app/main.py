@@ -27,3 +27,32 @@ from app.utils import (
 )
 
 logger = setup_logging(log_level="INFO")
+
+try:
+    from opik import track
+    OPIK_AVAILABLE=True
+except ImportError:
+    OPIK_AVAILABLE=False
+    def track(name=None, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
+app = FastAPI(
+    title="Multi-Source RAG + Text-to-SQL API",
+    description="A system that combines document RAG with natural language to SQL conversion",
+    version="0.1.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    root_path=settings.ROOT_PATH,  # For API Gateway: "/prod", for local: ""
+)
+embedding_service: EmbeddingService | None = None
+vector_service: VectorService | None = None
+rag_service: RAGService | None = None
+sql_service: TextToSQLService | None = None
+cache_service: CacheService | None = None
+query_cache_service: QueryCacheService | None = None
+
+UPLOAD_DIR = Path(settings.UPLOAD_DIR)
+CACHE_DIR = Path(settings.CACHE_DIR)
+
