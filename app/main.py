@@ -25,3 +25,5 @@ from app.utils import (
     FileValidator, QueryValidator, ValidationError,
     ErrorResponse, format_file_size, truncate_text
 )
+
+logger = setup_logging(log_level="INFO")

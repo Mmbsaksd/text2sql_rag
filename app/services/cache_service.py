@@ -77,7 +77,7 @@ class CacheService:
         
         sha256 = hashlib.sha256()
 
-        with open(file_path,b'rb') as f:
+        with open(file_path, 'rb') as f:
             for chunk in iter(lambda: f.read(8192),b''):
                 sha256.update(chunk)
         
