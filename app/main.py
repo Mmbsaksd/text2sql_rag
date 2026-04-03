@@ -169,30 +169,162 @@ async def root():
         "system_info": "/info",
     }
 
+@app.post("upload", status_code=status.HTTP_200_OK, tags=["Documents"])
+@track(name="upload_name")
+async def upload_documents(file: UploadFile=File(...)):
+    """
+    Upload and process a document (PDF, DOCX, CSV, JSON, TXT).
+    Pipeline: validate → save → [cache check] → parse → chunk → embed → cache → store
 
+    NEW: Implements intelligent caching to avoid re-processing identical documents.
 
+    Args:
+        file: The document file to upload (max 50 MB)
 
+    Returns:
+        dict: Upload status with filename, chunks created, and cache_hit indicator
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    Raises:
+        HTTPException: If validation fails or services unavailable
+    """
+    try:
+        FileValidator.validate_file(file)
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorResponse.validation_error(str(e), field="fie")
+        )
     
+    if not embedding_service or vector_service:
+        raise HTTPException(
+            status_code=503,
+            detail=ErrorResponse.service_unavailable(
+                "Document RAG services",
+                "Please configure Azure_OPENAI_API_KEY and PINECONE_API_KEY in .env"
+            )
+        )
+    try:
+        file_path = UPLOAD_DIR / file.filename
+        with open(file_path,"wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        file_extention = file_path.suffix.lstrip('.').lower()
+
+        doc_id = None
+        cache_hit = False
+        chunks = None
+        embeddings = None
+
+        if cache_service:
+            try:
+                doc_id = cache_service.compute_document_id(file_path)
+                logger.info(f"Document ID computed: {doc_id}")
+
+                if cache_service.cache_exists(doc_id, file_extention):
+                    logger.info(f"Cache HIT for document: {file.filename} (ID: {doc_id[:8]}...)")
+
+                    cache_data = cache_service.load_chunks_and_embeddings(doc_id, file_extention)
+
+                    if cache_data:
+                        chunks = cache_data['chunks']
+                        embeddings = cache_data['embeddings']
+                        cache_hit=True
+                        logger.info("Loaded {len(chunks)} chunks from cache, skipping processing")
+                    else:
+                        logger.warning("Cache load failed, falling back to full processing")
+                    
+                else:
+                    logger.info(f"Cache MISS for document: {file.filename} (ID: {doc_id[:8]}...)")
+
+            except Exception as e:
+                logger.warning(f"Cache check failed, proceeding with full processing: {e}")
+
+        if chunks is None or embeddings is None:
+            logger.info(f"Parsing and chunking document with context awareness: {file.filename}")
+            from app.services.docling_service import parse_and_chunk_document
+            chunk = parse_and_chunk_document(
+                str(file_path),
+                chunk_size=settings.CHUNK_SIZE,
+                min_chunk_size=settings.MIN_CHUNK_SIZE
+            )
+            logger.info(f"Created {len(chunks)} context-aware chunks (target {settings.MIN_CHUNK_SIZE}-{settings.CHUNK_SIZE} tokens)")
+
+            logger.info(f"Generating embeddings for {len(chunks)} chunks...")
+            texts = [chunk['text'] for chunk in chunks]
+
+            embeddings, embedding_usage = await embedding_service.generate_embeddings(texts)
+            if cache_service and doc_id:
+                try:
+                    cache_service.save_document(
+                        doc_id=doc_id,
+                        file_path=file_path,
+                        file_extension=file_extention
+                    )
+                    logger.info(f"Saved original document to storage: {doc_id}")
+
+                    metadata = {
+                        "document_id": doc_id,
+                        "original_filename": file.filename,
+                        "upload_timestamp": datetime.utcnow().isoformat()+"Z",
+                        "file_size_bytes": file_path.stat().st_size,
+                        "chunk_count": len(chunks),
+                        "embedding_model": "text-embedding-3-small",
+                        "chunk_size": settings.CHUNK_SIZE,
+                        "chunk_overlap": settings.CHUNK_OVERLAP,
+                        "file_extention": file_extention
+                    }
+                    cache_service.save_chunks_and_embeddings(
+                        doc_id=doc_id,
+                        file_extension=file_extention,
+                        chunks=chunks,
+                        embeddings=embeddings,
+                        metadata=metadata
+                    )
+                    logger.info(f"Saved cache data (chunks, embeddings, metadata): {doc_id}")
+
+                except Exception as e:
+                    logger.warning(f"Failed to save to cache (continuing anyway): {e}")
+        logger.info(f"Storing {len(chunks)} vectors in Pinecone...")
+        vector_service.add_documents(
+            chunks=chunks,
+            embeddings=embeddings,
+            filename=file.filename,
+            namespace="default"
+        )
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorResponse.validation_error(str(e))
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorResponse.internal_error("upload document", e)
+        )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def initialize_services():
     """Initialize all services. Called directly on Lambda startup or via FastAPI startup event."""
