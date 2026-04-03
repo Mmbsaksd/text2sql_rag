@@ -63,7 +63,7 @@ class VannaAgentWrapper:
     Wrapper around Vanna 2.0 Agent for synchronous use in FastAPI.
     Handles async-to-sync conversion and component extraction.
     """
-    def __init(
+    def __init__(
         self,
         azure_api_key: str,
         azure_endpoint: str,
@@ -281,7 +281,7 @@ class TextToSQLService:
         self.query_cache_service = query_cache_service
         self.azure_api_key = azure_api_key or settings.AZURE_OPENAI_API_KEY
         self.azure_endpoint = azure_endpoint or settings.AZURE_OPENAI_ENDPOINT
-        self.azure_deployment = azure_deployment or settings.AZURE_OPENAI_DEPLOYMENT
+        self.azure_deployment = azure_deployment or settings.AZURE_OPENAI_DEPLOYMENT_NAME
 
         if not self.azure_api_key:
             raise ValueError("AZURE_OPENAI_API_KEY is required")

@@ -60,7 +60,7 @@ class QueryCacheService:
         else:
             logger.info(
                 "ℹ️  Upstash Redis credentials not configured. "
-                "Cache disabled. Set UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN to enable."
+                "Cache disabled. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN to enable."
             )
     def _compute_hash(self, text: str) -> str:
         """Compute SHA-256 hash of text for cache keys."""

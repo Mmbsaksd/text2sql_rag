@@ -56,9 +56,6 @@ query_cache_service: QueryCacheService | None = None
 UPLOAD_DIR = Path(settings.UPLOAD_DIR)
 CACHE_DIR = Path(settings.CACHE_DIR)
 
-@app.on_event("startup")
-async def startup_event():
-    initialize_services()
 
 @app.get("/health", status_code=status.HTTP_200_OK)
 def health_check():
@@ -104,7 +101,7 @@ def health_check():
             "opik_configured": settings.OPIK_API_KEY is not None if hasattr(settings, 'OPIK_API_KEY') else False,
             "redis_cache_configured": settings.UPSTASH_REDIS_REST_URL is not None and settings.UPSTASH_REDIS_REST_TOKEN is not None,
         },
-        "cache": query_cache_service.health_status if query_cache_service else {"status": "not_initialized"},
+        "cache": query_cache_service.health_check() if query_cache_service else {"status": "not_initialized"},
 
     }
 
@@ -171,6 +168,31 @@ async def root():
         "health_check": "/health",
         "system_info": "/info",
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
 
 def initialize_services():
     """Initialize all services. Called directly on Lambda startup or via FastAPI startup event."""
@@ -257,4 +279,38 @@ def initialize_services():
         logger.error(f"Failed to initialize RAG services: {e}", exc_info=True)
         logger.warning("Document RAG features will be unavailable.")
 
-    
+    try:
+        if settings.DATABASE_URL and settings.AZURE_OPENAI_API_KEY:
+            logger.info("Initializing Text-to-SQL service...")
+            sql_service = TextToSQLService(query_cache_service=query_cache_service)
+            logger.info("Training Vanna on database schema and examples...")
+            sql_service.complete_training()
+            logger.info("✓ Text-to-SQL service initialized and trained!")
+        else:
+            logger.warning("DATABASE_URL not configured.")
+            logger.warning("Text-to-SQL features will be unavailable.")
+    except Exception as e:
+        logger.error(f"Failed to initialize SQL service: {e}", exc_info=True)
+        logger.warning("Text-to-SQL features will be unavailable.")
+
+    try:
+        logger.info("Initializing document cache service (S3/local)...")
+        cache_service = CacheService()
+        logger.info("✓ Document cache service initialized!")
+    except Exception as e:
+        logger.error(f"✗ Failed to initialize document cache service: {e}")
+        logger.warning("Document uploads will work but caching will be unavailable.")
+
+    logger.info("=" * 60)
+    logger.info("API is ready!")
+    logger.info("=" * 60)
+
+@app.on_event("startup")
+async def startup_event():
+    """Execute tasks on application startup."""
+    initialize_services()
+
+app.on_event("shutdown")
+async def shutdown_event():
+    """Execute cleanup tasks on application shutdown."""
+    logger.info("Shutting down Multi-Source RAG + Text-to-SQL API...")
