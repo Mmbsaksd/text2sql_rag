@@ -169,7 +169,7 @@ async def root():
         "system_info": "/info",
     }
 
-@app.post("upload", status_code=status.HTTP_200_OK, tags=["Documents"])
+@app.post("/upload", status_code=status.HTTP_200_OK, tags=["Documents"])
 @track(name="upload_name")
 async def upload_documents(file: UploadFile=File(...)):
     """
@@ -195,7 +195,7 @@ async def upload_documents(file: UploadFile=File(...)):
             detail=ErrorResponse.validation_error(str(e), field="fie")
         )
     
-    if not embedding_service or vector_service:
+    if not embedding_service or not vector_service:
         raise HTTPException(
             status_code=503,
             detail=ErrorResponse.service_unavailable(
@@ -242,7 +242,7 @@ async def upload_documents(file: UploadFile=File(...)):
         if chunks is None or embeddings is None:
             logger.info(f"Parsing and chunking document with context awareness: {file.filename}")
             from app.services.docling_service import parse_and_chunk_document
-            chunk = parse_and_chunk_document(
+            chunks = parse_and_chunk_document(
                 str(file_path),
                 chunk_size=settings.CHUNK_SIZE,
                 min_chunk_size=settings.MIN_CHUNK_SIZE
@@ -291,6 +291,66 @@ async def upload_documents(file: UploadFile=File(...)):
             filename=file.filename,
             namespace="default"
         )
+        if not cache_hit and query_cache_service and query_cache_service.enabled:
+            try:
+                deleted = query_cache_service.delete("rag:*")
+                if deleted >0:
+                    logger.info(f"✓ Invalidated RAG cache ({deleted} keys) due to new document upload")
+                else:
+                    logger.debug("No RAG cache keys to invalidate")
+            except Exception as e:
+                logger.warning(f"Failed to invalidate RAG cache (continuing anyway): {e}")
+        file_size = file_path.stat().st_size
+        total_token = sum(chunk['token_count'] for chunk in chunks)
+ 
+        if OPIK_AVAILABLE:
+            try:
+                from opik.opik_context import update_current_span
+                update_current_span(
+                    tags=[
+                        "document_upload",
+                        f"extension_{file_extention}",
+                        "cache_hit" if cache_hit else "cache_miss"
+                    ],
+                    metadata={
+                        "filename": file.filename,
+                        "file_size_bytes": file_size,
+                        "file_size_human": format_file_size(file_size),
+                        "file_extension": file_extention,
+                        "chunk_count": len(chunks),
+                        "total_tokens": total_token,
+                        "cache_hit": cache_hit
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update OPIK span: {e}")
+        storage_backend = "none"
+        if cache_service:
+            storage_class = type(cache_service.storage).__name__
+            if "S3" in storage_class:
+                storage_backend = "s3"
+            elif "Local" in storage_class:
+                storage_backend = "local"
+            else:
+                storage_backend = storage_class.lower()
+ 
+        return {
+            "status": "success",
+            "filename": file.filename,
+            "document_id": doc_id[:16] + "..." if doc_id else None,  # Show first 16 chars
+            "file_size": format_file_size(file_size),
+            "file_size_bytes": file_size,
+            "chunks_created": len(chunks),
+            "total_tokens": total_token,
+            "cache_hit": cache_hit,  # NEW: Indicate if cache was used
+            "storage_backend": storage_backend,  # NEW: Report storage backend
+            "message": (
+                f"Document loaded from cache and {len(chunks)} chunks stored in Pinecone"
+                if cache_hit
+                else f"Document processed and {len(chunks)} chunks stored in Pinecone"
+            )
+        }
+ 
     except ValidationError as e:
         raise HTTPException(
             status_code=400,

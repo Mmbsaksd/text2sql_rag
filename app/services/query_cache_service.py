@@ -193,7 +193,7 @@ class QueryCacheService:
             return False
         
     # ==================== Cache Key Generators ====================
-    def get_embeddings_key(self, text: str)-> str:
+    def get_embedding_key(self, text: str)-> str:
         """Generate cache key for embedding."""
         text_hash = self._compute_hash(text)
         return f"embedding:{text_hash}"
