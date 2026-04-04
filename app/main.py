@@ -362,6 +362,86 @@ async def upload_documents(file: UploadFile=File(...)):
             detail=ErrorResponse.internal_error("upload document", e)
         )
 
+@app.post("/query/documents", status_code=status.HTTP_200_OK, tags=["Query"])
+@track(name="query_documents", type="llm")
+async def query_documents(question: str, top_k: int = 3):
+    """
+    Query documents using RAG (Retrieval-Augmented Generation).
+    Retrieves relevant chunks and generates an answer using GPT-4.
+
+    Args:
+        question: The question to answer (3-1000 characters)
+        top_k: Number of document chunks to retrieve (1-10, default: 3)
+
+    Returns:
+        dict: Generated answer with sources and metadata
+
+    Raises:
+        HTTPException: If validation fails or service unavailable
+    """
+    global rag_service
+
+    try:
+        question = QueryValidator.validate_question(question)
+        top_k = QueryValidator.validate_top_k(top_k)
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorResponse.validation_error(str(e))
+        )
+    
+    if not rag_service:
+        raise HTTPException(
+            status_code=503,
+            detail=ErrorResponse.service_unavailable(
+                "RAG service",
+                "Please configure OPENAI_API_KEY and PINECONE_API_KEY in .env"
+            )
+        )
+    
+    try:
+        result = await rag_service.generate_answer(
+            question=question,
+            top_k=top_k,
+            namespace="default",
+            include_sources=True
+        )
+        if OPIK_AVAILABLE:
+            try:
+                from opik.opik_context import update_current_span
+                usage_data = result.get('usage')
+
+                span_update = {
+                    "tags": ["document_query", f"top_k_{top_k}"],
+                    "metadata": {
+                        "question_length": len(question),
+                        "top_k": top_k,
+                        "chunks_retrieved": result.get('chunks_used', 0),
+                        "model": result.get('model', 'unknown')
+                    },
+                    "model": "gpt-4-turbo-preview",
+                    "provider": "openai"
+                }
+                if usage_data:
+                    span_update["usage"] = {
+                        "prompt_tokens": usage_data['embedding_tokens'] + usage_data['llm_prompt_tokens'],
+                        "completion_tokens": usage_data['llm_completion_tokens'],
+                        "total_tokens": usage_data['total_tokens']
+                    }
+                
+                update_current_span(**span_update)
+
+            except Exception as e:
+                logger.warning(f"Failed to update OPIK span: {e}")
+                
+        return result
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorResponse.internal_error("query documents", e)
+        )
+    
 
 
 
