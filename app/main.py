@@ -433,7 +433,7 @@ async def query_documents(question: str, top_k: int = 3):
 
             except Exception as e:
                 logger.warning(f"Failed to update OPIK span: {e}")
-                
+
         return result
     
     except Exception as e:
@@ -442,13 +442,286 @@ async def query_documents(question: str, top_k: int = 3):
             detail=ErrorResponse.internal_error("query documents", e)
         )
     
+@app.get("/documents", status_code=status.HTTP_200_OK, tags=["Documents"])
+async def list_documents():
+    """
+    List all uploaded documents.
 
+    Returns:
+        dict: List of uploaded documents with metadata
+    """
+    try:
+        documents = []
+        for file_path in UPLOAD_DIR.iterdir():
+            if file_path.is_file() and not file_path.name.startswith('.'):
+                documents.append({
+                    "filename": file_path.name,
+                    "size_bytes": file_path.stat().st_size,
+                    "upload_at": datetime.fromtimestamp(file_path.stat().st_mtime).isoformat()
+                })
+        return {
+            "total_documents": len(documents),
+            "documents": documents
+        }
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list documents: {str(e)}")
 
+@app.get("/stats", status_code=status.HTTP_200_OK, tags=["Information"])
+async def get_stats():
+    """
+    Get system statistics and usage information.
 
+    NEW: Includes query cache statistics and cost savings estimates.
 
+    Returns:
+        dict: Statistics including document count, total size, service status, and cache performance
+    """
+    global sql_service, query_cache_service
 
+    try:
+        total_size = 0
+        documents = []
+        for file_path in UPLOAD_DIR.iterdir():
+            if file_path.is_file() and not file_path.name.startswith('.'):
+                file_size = file_path.stat().st_size
+                documents.append({
+                    "filename": file_path.name,
+                    "size_bytes": file_size
+                })
+                total_size +=file_size
 
+        pending_sql_count = 0
+        if sql_service:
+            try:
+                pending_sql_count = len(sql_service.get_pending_queries())
+            except Exception as e:
+                pass
+
+        cache_stats = None
+        total_cost_saved = 0.0
+        if query_cache_service and query_cache_service.enabled:
+            try:
+                stats = query_cache_service.get_stats()
+                cost_estimates = {
+                    "rag": 0.05, 
+                    "embedding": 0.00002, 
+                    "sql_gen": 0.08, 
+                    "sql_result": 0.01,
+                }
+
+                for cache_type, cache_data in stats["cache_types"].items():
+                    if cache_type in cost_estimates:
+                        savings = cache_data["hits"] * cost_estimates[cache_type]
+                        cache_data["estimated_cost_saved"] = f"${savings:.4f}"
+                        total_cost_saved +=savings
+
+                cache_stats = {
+                    "enabled": True,
+                    "by_type": stats["cache_types"],
+                    "total_estimated_savings": f"${total_cost_saved:.4f}",
+                    "overall_hit_rate": f"{(sum(c['hits'] for c in stats['cache_types'].values()) / max(sum(c['total_queries'] for c in stats['cache_types'].values()), 1) * 100):.1f}%"
+                }
+                
+            except Exception as e:
+                logger.warning(f"Failed to get query cache stats: {e}")
+                cache_stats = {"enabled": True, "error": "Failed to retrieve stats"}
+
+        else:
+            cache_stats = {
+                "enabled": False,
+                "message":  "Query cache not configured (set UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN to enable)"
+            }
+
+        return {
+            "documents": {
+                "total_uploaded": len(documents),
+                "total_size": format_file_size(total_size),
+                "total_size_bytes": total_size,
+            },
+            "sql": {
+                "pending_queries": pending_sql_count,
+                "service_available": sql_service is not None,
+            },
+            "query_cache": cache_stats, 
+            "system": {
+                "uptime_checked_at": datetime.utcnow().isoformat(),
+                "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+            },
+            "configuration": {
+                "chunk_size": settings.CHUNK_SIZE,
+                "chunk_overlap": settings.CHUNK_OVERLAP,
+                "max_file_size": format_file_size(FileValidator.MAX_FILE_SIZE),
+                "cache_ttl": {
+                    "rag": f"{settings.CACHE_TTL_RAG}s",
+                    "embeddings": f"{settings.CACHE_TTL_EMBEDDINGS}s",
+                    "sql_generation": f"{settings.CACHE_TTL_SQL_GEN}s",
+                    "sql_results": f"{settings.CACHE_TTL_SQL_RESULT}s"
+                } if query_cache_service and query_cache_service.enabled else "disabled"
+            }
+
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorResponse.internal_error("get statistics", e)
+        )
+    
+@app.get("/cache/stats", status_code=status.HTTP_200_OK, tags=["Cache"])
+async def get_cache_stats():
+    """
+    Get cache statistics (total documents, size, etc.).
+
+    Returns:
+        dict: Cache statistics including document count and total size
+    """
+    global cache_service
+
+    if not cache_service:
+        raise HTTPException(
+            status_code=503,
+            detail=ErrorResponse.service_unavailable(
+                "Cache service",
+                "Cache service not initialized"
+            )
+        )
+    try:
+        stats = cache_service.get_cache_stats()
+        return{
+            "status": "success",
+            "cache_stats": stats,
+            "message": f"Cache contains {stats['total_documents']} documents"
+        }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorResponse.internal_error("get cache stats", e)
+        )
+    
+@app.delete("/cache/clear", status_code=status.HTTP_200_OK, tags=["Cache"])
+async def clear_cache(document_id: Optional[str] = None):
+    """
+    Clear cache for specific document or entire cache.
+
+    Clears BOTH:
+    - S3 document cache (chunks, embeddings, metadata)
+    - Redis query cache (RAG responses, SQL queries, embeddings)
+
+    Args:
+        document_id: Optional document ID to clear (if not provided, clears all cache)
+
+    Returns:
+        dict: Result of cache clearing operation
+    """
+    global cache_service, query_cache_service
+
+    if not cache_service:
+        raise HTTPException(
+            status_code=503,
+            detail=ErrorResponse.service_unavailable(
+                "Cache service",
+                "Cache service not initialized"
+            )
+        )
+    
+    try:
+        s3_result = cache_service.clear_cache(doc_id=document_id)
+
+        redis_cleared = False
+        redis_message = "Redis cache not enabled"
+
+        if not document_id and query_cache_service and query_cache_service.enabled:
+            try:
+                redis_cleared = query_cache_service.flush_all()
+                redis_message = "Redis cache cleared successfully" if redis_cleared else "Redis flush failed"
+            except Exception as e:
+                redis_message = f"Redis flush error: {str(e)}"
+
+        return {
+            "status": "success" if s3_result['cleared'] else "failed",
+            "s3_cache": s3_result,
+            "redis_cache": {
+                "cleared": redis_cleared,
+                "message": redis_message
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorResponse.internal_error("clear cache", e)
+        )
+    
+@app.get("/cache/query/stats", status_code=status.HTTP_200_OK, tags=["Query Cache"])
+async def get_query_cache_stats():
+    """
+    Get query cache statistics (hit rates, cache effectiveness).
+
+    NEW: Query-level cache statistics showing cache hit rates for:
+    - RAG responses (GPT-4 calls)
+    - Embeddings (OpenAI embedding API)
+    - SQL generation (GPT-4o calls)
+    - SQL results (database queries)
+
+    Returns:
+        dict: Cache statistics including hit rates and potential cost savings
+    """
+    global query_cache_service
+    if not query_cache_service:
+        raise HTTPException(
+            status_code=503,
+            detail=ErrorResponse.service_unavailable(
+                "Query cache service",
+                "Query cache service not initialized"
+            )
+        )
+    try:
+        stats = query_cache_service.get_stats()
+        cost_estimates = {
+            "rag": 0.05,  # $0.05 per GPT-4 call
+            "embedding": 0.00002,  # $0.00002 per embedding
+            "sql_gen": 0.08,  # $0.08 per GPT-4o call
+            "sql_result": 0.01,  # $0.01 average database query cost
+        }
+        total_savings = 0
+        if stats["enabled"]:
+            for cache_type, cache_stats in stats["cache_types"].items():
+                if cache_type in cost_estimates:
+                    savings = cache_stats["hits"]*cost_estimates[cache_type]
+                    cache_stats["estimated_cost_saved"] = f"${savings:.4f}"
+                    total_savings +=savings
+
+        return {
+            "status": "success",
+            "cache_stats": stats,
+            "total_estimated_savings": f"${total_savings:.4f}",
+            "message": "Query cache enabled" if stats["enabled"] else "Query cache disabled"
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorResponse.internal_error("get query cache stats", e)
+        )
+    
+@app.delete("/cache/query", status_code=status.HTTP_200_OK, tags=["Query Cache"])
+async def clear_query_cache(cache_type: Optional[str]=None):
+    """
+    Clear query cache (all types or specific type).
+
+    Args:
+        cache_type: Optional cache type to clear ("rag", "embedding", "sql_gen", "sql_result")
+                   If not provided, clears all query caches
+
+    Returns:
+        dict: Result of cache clearing operation
+
+    Examples:
+        - DELETE /cache/query → Clear all query caches
+        - DELETE /cache/query?cache_type=rag → Clear only RAG response cache
+        - DELETE /cache/query?cache_type=sql_gen → Clear only SQL generation cache
+    """
 
 
 
