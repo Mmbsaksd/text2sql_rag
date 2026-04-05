@@ -722,7 +722,62 @@ async def clear_query_cache(cache_type: Optional[str]=None):
         - DELETE /cache/query?cache_type=rag → Clear only RAG response cache
         - DELETE /cache/query?cache_type=sql_gen → Clear only SQL generation cache
     """
+    global query_cache_service
 
+    if not query_cache_service:
+        raise HTTPException(
+            status_code=503,
+            detail=ErrorResponse.service_unavailable(
+                "Query cache service",
+                "Query cache service not initialized"
+            )
+        )        
+    if not query_cache_service.enabled:
+        return {
+            "status": "disabled",
+            "message": "Query cache is not enabled (Redis not configured)"
+        }
+    
+    try:
+        if cache_type:
+            valid_types = ["rag", "embedding", "sql_gen", "sql_result"]
+            if cache_type not in valid_types:
+                raise HTTPException(
+                    status_code=400,
+                    detail=ErrorResponse.validation_error(
+                        f"Invalid cache_type. Must be one of: {', '.join(valid_types)}",
+                        field="cache_type"
+                    )
+                )
+            pattern = f"{cache_type}:*"
+            message =  f"Cleared {cache_type} cache"
+        else:
+            patterns = ["rag:*", "embedding:*", "sql_gen:*", "sql_result:*"]
+            total_deleted = 0
+            for pattern in patterns:
+                deleted = query_cache_service.delete(pattern)
+                total_deleted +=deleted
+            query_cache_service.reset_stats()
+            return {
+                "status": "success",
+                "key_deleted": total_deleted,
+                "message": f"Cleared all query caches ({total_deleted} keys deleted)"
+            }
+        deleted = query_cache_service.delete(pattern)
+        return {
+            "status": "success",
+            "cache_type": cache_type,
+            "keys_deleted": deleted,
+            "message": message
+        }
+
+    except HTTPException as e:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorResponse.internal_error("clear query cache", e)
+        )
 
 
 
