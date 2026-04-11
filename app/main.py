@@ -778,8 +778,90 @@ async def clear_query_cache(cache_type: Optional[str]=None):
             status_code=500,
             detail=ErrorResponse.internal_error("clear query cache", e)
         )
+    
+@app.delete("/vectors/clear", status_code=status.HTTP_200_OK, tags=["Vectors"])
+async def clear_vectors(
+    namespace: Optional[str] = "default",
+    confirm: Optional[bool] = False
+):
+    """
+    Clear all vectors from the Pinecone vector database.
 
+    WARNING: This operation is irreversible! All document embeddings will be deleted.
 
+    Parameters:
+    - namespace: Namespace to clear (default: "default", use "*" for all namespaces)
+    - confirm: Must be set to true to proceed (safety confirmation)
+
+    Returns:
+    - status: Operation status (success/failed)
+    - namespaces_cleared: List of namespaces that were cleared
+    - vector_count_before: Total vectors before deletion
+    - vector_count_after: Total vectors after deletion
+    - vectors_deleted: Number of vectors deleted
+    - message: Human-readable status message
+
+    Example:
+        DELETE /vectors/clear?namespace=default&confirm=true
+    """
+    global vector_service
+
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Confirmation required",
+                "message": "You must set confirm=true to clear vectors. This operation cannot be undone!",
+                "example": "/vectors/clear?namespace=default&confirm=true"
+            }
+
+        )
+    
+    if not vector_service:
+        raise HTTPException(
+            status_code=503,
+            detail=ErrorResponse.service_unavailable(
+                "Vector database not initialized. Check PINECONE_API_KEY configuration."
+            )
+        )
+    try:
+        stats_before = vector_service.get_index_stats()
+        total_vectors_before = stats_before.get('total_vector_count', 0)
+
+        logger.warning(
+            f"Vector clear requested: namespace={namespace}, "
+            f"total_vectors={total_vectors_before}"
+        )
+
+        result = vector_service.delete_all_vectors(namespace=namespace)
+
+        stats_after = vector_service.get_index_stats()
+        total_vectors_after = stats_after.get('total_vector_count', 0)
+
+        response = {
+            "status": result['status'],
+            "namespace_cleared": result['namespaces_cleared'],
+            "vector_counts_before": total_vectors_before,
+            "vector_counts_after": total_vectors_after,
+            "vectors_deleted": total_vectors_before - total_vectors_after,
+            "message": result['message']
+        }
+        logger.info(
+            f"Vector clear completed: {response['vectors_deleted']} vectors deleted "
+            f"from {len(result['namespaces_cleared'])} namespace(s)"
+            )
+        
+        return response
+    
+    except Exception as e:
+        logger.error(f"Vector clear failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorResponse.internal_error("clear_vectors", e)
+        )
+    
+@app.post("/query", status_code=status.HTTP_200_OK, tags=["Query"])
+@track(name="unified_query")
 
 
 
