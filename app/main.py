@@ -1011,16 +1011,126 @@ async def unified_query(question: str, auto_approve_sql: Optional[bool] = False,
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unified query failed: {str(e)}")
 
+@app.post("/query/sql/generate", status_code=status.HTTP_200_OK, tags=["SQL"])
+@track(name="generate_sql", type="llm")
+async def generate_sql(question: str):
+    """
+    Generate SQL from a natural language question using Vanna.ai.
+    Returns the SQL for user review and approval before execution.
 
+    Args:
+        question: Natural language question about the database
 
+    Returns:
+        dict: Generated SQL with query_id for approval
+    """
+    global sql_service
 
+    if not sql_service:
+        raise HTTPException(
+            status_code=503,
+            detail="SQL service not initialized. Please configure DATABASE_URL in .env file."
+        )
+    
+    try:
+        result = await sql_service.generate_sql_for_approval(question)
 
+        if OPIK_AVAILABLE:
+            try:
+                from opik.opik_context import update_current_span
+                update_current_span(
+                    tags=["sql_generation", "text_to_sql"],
+                    metadata = {
+                        "question_length": len(question),
+                        "sql_length": len(result.get('sql', '')),
+                        "query_id": result.get('query_id'),
+                        "model": settings.VANNA_MODEL
+                    },
+                    model=settings.VANNA_MODEL,
+                    provider="azureopenai"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update OPIK span: {e}")
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SQL generation failed: {str(e)}")
 
+@app.post("/query/sql/execute", status_code=status.HTTP_200_OK, tags=["SQL"])
+@track(name="execute_sql")
+async def execute_sql(query_id: str, approved: bool = True):
+    """
+    Execute a previously generated SQL query after user approval.
 
+    Args:
+        query_id: ID from the generate_sql endpoint
+        approved: Whether to execute (True) or reject (False) the query
 
+    Returns:
+        dict: Query results or rejection message
+    """
+    global sql_service
 
+    if not sql_service:
+        raise HTTPException(
+            status_code=503,
+            detail="SQL service not initialized. Please configure DATABASE_URL in .env file."
+        )
+    
+    try:
+        result = await sql_service.execute_approved_query(query_id, approved)
+        if result.get('status') == 'error':
+            raise HTTPException(status_code=400, detail=result.get('error', 'Unknown error'))
+        
+        if OPIK_AVAILABLE:
+            try:
+                from opik.opik_context import update_current_span
+                update_current_span(
+                    tags=[
+                        "sql_execution",
+                        "approved" if approved else "rejected"
+                    ],
+                    metadata={
+                        "query_id": query_id,
+                        "approved": approved,
+                        "result_count": result.get('result_count', 0),
+                        "status": result.get('status')
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update OPIK span: {e}")
+        return result
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SQL execution failed: {str(e)}")
 
+@app.get("/query/sql/pending", status_code=status.HTTP_200_OK, tags=["SQL"])
+async def list_pending_sql_queries():
+    """
+    List all SQL queries pending approval.
 
+    Returns:
+        dict: List of pending queries with their IDs and SQL
+    """
+    global sql_service
+
+    if not sql_service:
+        raise HTTPException(
+            status_code=503,
+            detail="SQL service not initialized."
+        )
+    
+    try:
+
+        pending = sql_service.get_pending_queries()
+        return {
+            "total_pending": len(pending),
+            "pending_queries": pending
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list pending queries: {str(e)}")
 
 
 def initialize_services():

@@ -1,6 +1,6 @@
 """
 SQL Service - Vanna 2.0 Agent Framework Implementation
-Handles Text-to-SQL conversion using Vanna.ai 2.0 with OpenAI and PostgreSQL.
+Handles Text-to-SQL conversion using Vanna.ai 2.0 with Azure OpenAI
 """
 
 from typing import Dict, Any, List, Optional
@@ -8,39 +8,18 @@ import uuid
 import asyncio
 import pandas as pd
 import logging
-from openai import AzureOpenAI
 from app.config import settings
 
 logger = logging.getLogger("rag_app.sql_service")
 
+from vanna.integrations.azureopenai.llm import AzureOpenAILlmService
 from vanna import Agent
 from vanna.integrations.postgres import PostgresRunner
 from vanna.core.registry import ToolRegistry
 from vanna.tools import RunSqlTool
 from vanna.core.user import UserResolver, User, RequestContext
 
-class AzureLlmService:
-    def __init__(self, api_key, endpoint, deployment):
-        self.client = AzureOpenAI(
-            api_key=api_key,
-            azure_endpoint=endpoint,
-            api_version="2024-02-15-preview"
-        )
-        self.deployment = deployment
 
-    async def generate(self, request):
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-             lambda: self.client.chat.completions.create(
-                model=self.deployment,
-                messages=request["messages"],
-                temperature=settings.VANNA_TEMPERATURE,
-                top_p=settings.VANNA_TOP_P,
-                max_tokens=settings.VANNA_MAX_TOKENS,
-             )
-        )
-        return response.choices[0].message.content
     
 try:
     from vanna.integrations.pinecone import PineconeAgentMemory
@@ -79,11 +58,13 @@ class VannaAgentWrapper:
             database_url: PostgreSQL connection string
             pinecone_api_key: Optional Pinecone API key for persistent memory
         """
-        self.llm = AzureLlmService(
+        self.llm = AzureOpenAILlmService(
+            model=azure_deployment,
             api_key=azure_api_key,
-            endpoint=azure_endpoint,
-            deployment=azure_deployment
+            azure_endpoint=azure_endpoint,
+            api_version=settings.AZURE_OPENAI_API_VERSION
         )
+
         logger.info(
             f"Configuring SQL LLM with deterministic settings: "
             f"temperature={settings.VANNA_TEMPERATURE}, "

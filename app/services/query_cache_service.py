@@ -203,7 +203,7 @@ class QueryCacheService:
         question_hash = self._compute_hash(question.lower())
         return f"rag:{question_hash}:{top_k}"
 
-    def get_sql_gen_key(self, question: str, top_k: int)-> str:
+    def get_sql_gen_key(self, question: str)-> str:
         """Generate cache key for SQL generation."""
         question_hash = self._compute_hash(question.lower())
         return f"sql_gen:{question_hash}"
