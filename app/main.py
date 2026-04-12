@@ -862,7 +862,154 @@ async def clear_vectors(
     
 @app.post("/query", status_code=status.HTTP_200_OK, tags=["Query"])
 @track(name="unified_query")
+async def unified_query(question: str, auto_approve_sql: Optional[bool] = False, top_k: int = 3):
+    """
+    Unified query endpoint with intelligent routing.
+    Automatically routes queries to SQL, Documents, or both (HYBRID) based on intent.
 
+    Args:
+        question: The natural language question
+        auto_approve_sql: If True, automatically execute SQL queries without approval (testing only)
+        top_k: Number of document chunks to retrieve for RAG (default: 3)
+
+    Returns:
+        dict: Query results with routing information and answers
+    """
+    global rag_service, sql_service
+
+    try:
+        route_type = QueryRouter.route(question)
+        result = {
+            "question": question,
+            "route": route_type,
+            "routing_explanation": QueryRouter.explain_routing(question)
+        }
+        if OPIK_AVAILABLE:
+            try:
+                from opik.opik_context import update_current_span
+                update_current_span(
+                    tags=[
+                        "unified_query",
+                        f"route{route_type.lower()}",
+                        "auto_approve" if auto_approve_sql else "manual_approve"
+                    ],
+                    metadata={
+                        "question_length": len(question),
+                        "route_type": route_type,
+                        "auto_approve_sql": auto_approve_sql,
+                        "top_k": top_k
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update OPIK span: {e}")
+        
+        if route_type == "SQL":
+            if not sql_service:
+                raise HTTPException(
+                    status_code=503,
+                    detail="SQL service not initialized. Please configure DATABASE_URL in .env file."
+                )
+            
+            sql_result = await sql_service.generate_sql_for_approval(question)
+
+            if auto_approve_sql:
+                execution_result = await sql_service.execute_approved_query(
+                    sql_result['query_id'],
+                    approved=True
+                )
+                if execution_result.get('status') == 'error':
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"SQL execution failed: {execution_result.get('error', 'Unknown error')}"
+                    )
+                result.update({
+                    "sql": execution_result['sql'],
+                    "results": execution_result['results'],
+                    "result_count": execution_result['result_count'],
+                    "status": "executed",
+                    "note": "SQL auto-executed (testing mode)"
+                })
+            else:
+                result.update({
+                    "query_id": sql_result['query_id'],
+                    "sql": sql_result['sql'],
+                    "explanation": sql_result['explanation'],
+                    "status": "pending_approval",
+                    "note": "Use POST /query/sql/execute with this query_id to execute"
+                })
+        elif route_type == "DOCUMENTS":
+            if not rag_service:
+                raise HTTPException(
+                    status_code=503,
+                    detail="RAG service not initialized. Please configure API keys in .env file."
+                )
+            rag_result = await rag_service.generate_answer(
+                question=question,
+                top_k=top_k,
+                namespace="default",
+                include_sources=True
+            )
+            result.update({
+                "answer": rag_result['answer'],
+                "sources": rag_result.get('sources', []),
+                "chunks_used": rag_result.get('chunks_used', 0),
+                "status": "completed"
+            })
+        elif route_type == "HYBRID":
+            if not sql_service or not rag_service:
+                missing_services = []
+                if not sql_service:
+                    missing_services.append("SQL service")
+                if not rag_service:
+                    missing_services.append("RAG service")
+
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"HYBRID query requires both services. Missing: {', '.join(missing_services)}"
+                )
+            sql_result = await sql_service.generate_sql_for_approval(question)
+
+            if auto_approve_sql:
+                execution_result = await sql_service.execute_approved_query(
+                    sql_result['query_id'],
+                    approved=True
+                )
+                sql_data = {
+                    "sql":execution_result['sql'],
+                    "results": execution_result["results"],
+                    "result_counts": execution_result["result_count"],
+                    "status": "executed"
+                }
+            else:
+                sql_data = {
+                    "query_id":sql_result['query_id'],
+                    "sql": sql_result['sql'],
+                    "explanation": sql_result["explanation"],
+                    "status": "pending_approval"
+                }
+            rag_result = await rag_service.generate_answer(
+                question=question,
+                top_k=top_k,
+                namespace = "default",
+                include_sources=True
+            )
+
+            result.update({
+                "sql_component": sql_data,
+                "document_component": {
+                    "answer": rag_result['answer'],
+                    "sources": rag_result.get('sources', []),
+                    "chunks_used": rag_result.get('chunks_used', 0)
+                },
+                "status": "completed" if auto_approve_sql else "partial_pending_sql_approval",
+                "note": "HYBRID query combines both SQL data and document context"
+            })
+
+            return result
+    except HTTPException as e:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unified query failed: {str(e)}")
 
 
 
