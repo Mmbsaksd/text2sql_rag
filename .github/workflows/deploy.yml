@@ -189,6 +189,9 @@ jobs:
               --function-name "${LAMBDA_FUNCTION}" \
               --image-uri "${IMAGE_URI}" \
               --architectures x86_64
+
+            aws lambda wait function-updated \
+              --function-name "${LAMBDA_FUNCTION}"
           else
             aws lambda create-function \
               --function-name "${LAMBDA_FUNCTION}" \
@@ -198,10 +201,10 @@ jobs:
               --architectures x86_64 \
               --timeout 900 \
               --memory-size 2048
-          fi
 
-          aws lambda wait function-active \
-            --function-name "${LAMBDA_FUNCTION}"
+            aws lambda wait function-active \
+              --function-name "${LAMBDA_FUNCTION}"
+          fi
 
       - name: Update Lambda environment variables
         env:
