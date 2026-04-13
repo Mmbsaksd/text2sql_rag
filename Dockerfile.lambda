@@ -5,6 +5,8 @@
 # - For ARM64: docker build --platform linux/arm64 ...
 # Platform is specified via GitHub Actions buildx configuration
 
+ARG BASE_IMAGE=lambda-python-deps:3.12
+
 # ============================================================================
 # Stage 1: Import UV binary from official image
 # ============================================================================
@@ -60,7 +62,6 @@ RUN chmod -R 755 ${LAMBDA_TASK_ROOT}/app && \
 # ============================================================================
 # Stage 3: Final runtime image
 # ============================================================================
-ARG BASE_IMAGE=lambda-python-deps:3.12
 FROM ${BASE_IMAGE}
 
 # Copy everything from builder stage (permissions already fixed)
