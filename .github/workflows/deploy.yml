@@ -270,30 +270,44 @@ jobs:
           else
             aws lambda create-function-url-config \
               --function-name "${LAMBDA_FUNCTION}" \
-              --auth-type NONE > /tmp/function-url.json
-
-            aws lambda add-permission \
-              --function-name "${LAMBDA_FUNCTION}" \
-              --statement-id FunctionURLAllowPublicAccess \
-              --action lambda:InvokeFunctionUrl \
-              --principal "*" \
-              --function-url-auth-type NONE >/dev/null 2>&1 || true
-
-            aws lambda add-permission \
-              --function-name "${LAMBDA_FUNCTION}" \
-              --statement-id FunctionURLAllowPublicInvoke \
-              --action lambda:InvokeFunction \
-              --principal "*" \
-              --function-url-auth-type NONE >/dev/null 2>&1 || true
+              --auth-type NONE >/tmp/function-url.json
           fi
+
+          aws lambda add-permission \
+            --function-name "${LAMBDA_FUNCTION}" \
+            --statement-id FunctionURLAllowPublicAccess \
+            --action lambda:InvokeFunctionUrl \
+            --principal "*" \
+            --function-url-auth-type NONE >/dev/null 2>&1 || true
+
+          aws lambda add-permission \
+            --function-name "${LAMBDA_FUNCTION}" \
+            --statement-id FunctionURLAllowPublicInvoke \
+            --action lambda:InvokeFunction \
+            --principal "*" \
+            --invoked-via-function-url >/dev/null 2>&1 || true
 
           PUBLIC_URL=$(jq -r '.FunctionUrl' /tmp/function-url.json)
           printf 'PUBLIC_URL=%s\n' "${PUBLIC_URL}" >> "${GITHUB_ENV}"
 
       - name: Smoke test deployment
         run: |
-          curl --fail --silent --show-error "${PUBLIC_URL%/}/health" > /tmp/health.json
-          curl --fail --silent --show-error "${PUBLIC_URL%/}/info" > /tmp/info.json
+          echo "Waiting for Lambda cold start and URL permissions to settle..."
+          sleep 10
+
+          for attempt in 1 2 3 4; do
+            if curl --fail --silent --show-error --max-time 120 "${PUBLIC_URL%/}/health" > /tmp/health.json; then
+              break
+            fi
+            if [ "${attempt}" -eq 4 ]; then
+              echo "Health check failed after ${attempt} attempts."
+              exit 1
+            fi
+            echo "Health check attempt ${attempt} failed, retrying in 15 seconds..."
+            sleep 15
+          done
+
+          curl --fail --silent --show-error --max-time 120 "${PUBLIC_URL%/}/info" > /tmp/info.json
 
           echo "Health and info endpoints responded successfully."
 
