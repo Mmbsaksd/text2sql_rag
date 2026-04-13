@@ -14,6 +14,7 @@ try:
     from docling.document_converter import DocumentConverter
     from docling.chunking import HybridChunker
     from docling_core.transforms.chunker.tokenizer.openai import OpenAITokenizer
+
     DOCLING_AVAILABLE = True
 except Exception as e:
     logger.warning(f"Docling not available: {e}")
@@ -35,11 +36,13 @@ def convert_document(file_path: str):
         Exception: If conversion fails
     """
     if not DOCLING_AVAILABLE:
-        raise ImportError("Docling is not installed. Run: pip install docling docling-core")
-    
+        raise ImportError(
+            "Docling is not installed. Run: pip install docling docling-core"
+        )
+
     if not Path(file_path).exists():
         raise FileNotFoundError(f"File not found: {file_path}")
-    
+
     try:
         logger.info(f"Converting document with Docling: {Path(file_path).name}")
         converter = DocumentConverter()
@@ -48,14 +51,15 @@ def convert_document(file_path: str):
 
         logger.info(f"Document converted successfully: {len(doc.texts)} text elements")
         return doc
-    
+
     except Exception as e:
         logger.error(f"Docling conversion failed: {str(e)}")
         raise Exception(f"Failed to convert document with Docling: {str(e)}")
-    
 
-    
-def chunk_with_hybrid(doc, max_tokens: int =512, min_tokens: int =256) -> List[Dict[str, Any]]:
+
+def chunk_with_hybrid(
+    doc, max_tokens: int = 512, min_tokens: int = 256
+) -> List[Dict[str, Any]]:
     """
     Chunk document using HybridChunker with context awareness.
 
@@ -86,24 +90,24 @@ def chunk_with_hybrid(doc, max_tokens: int =512, min_tokens: int =256) -> List[D
         )
     try:
         import tiktoken
+
         tiktoken_encoder = tiktoken.get_encoding("cl100k_base")
 
-        tokenizer = OpenAITokenizer(
-            tokenizer=tiktoken_encoder,
-            max_tokens=max_tokens
-        )
+        tokenizer = OpenAITokenizer(tokenizer=tiktoken_encoder, max_tokens=max_tokens)
 
         chunker = HybridChunker(
-            tokenizer=tokenizer,
-            max_tokens=max_tokens,
-            merge_peers=True
+            tokenizer=tokenizer, max_tokens=max_tokens, merge_peers=True
         )
 
-        logger.info(f"Chunking with HybridChunker (max_tokens={max_tokens}, merge_peers=True)")
+        logger.info(
+            f"Chunking with HybridChunker (max_tokens={max_tokens}, merge_peers=True)"
+        )
 
         raw_chunks = list(chunker.chunk(dl_doc=doc))
 
-        logger.info(f"Generated {len(raw_chunks)} raw semantic chunks, merging to target {min_tokens}-{max_tokens} tokens")
+        logger.info(
+            f"Generated {len(raw_chunks)} raw semantic chunks, merging to target {min_tokens}-{max_tokens} tokens"
+        )
 
         merged_chunks = []
         current_merged = None
@@ -118,33 +122,51 @@ def chunk_with_hybrid(doc, max_tokens: int =512, min_tokens: int =256) -> List[D
                 combined_tokens = current_tokens + token_count
 
                 if current_tokens < min_tokens and combined_tokens < max_tokens:
-                    current_merged.text = current_merged.text + "\n\n"+ chunk.text
+                    current_merged.text = current_merged.text + "\n\n" + chunk.text
 
                     if chunk.meta and chunk.meta.headings:
                         if not current_merged.meta.headings:
                             current_merged.meta.headings = []
-                        
+
                         for h in chunk.meta.headings:
                             if h not in current_merged.meta.headings:
                                 current_merged.meta.headings.append(h)
-                    
-                    if chunk.meta and chunk.meta.origin and hasattr(chunk.meta.origin, 'page_numbers'):
+
+                    if (
+                        chunk.meta
+                        and chunk.meta.origin
+                        and hasattr(chunk.meta.origin, "page_numbers")
+                    ):
                         if chunk.meta.origin.page_numbers:
-                            if not hasattr(current_merged.meta.origin, 'page_numbers') or not current_merged.meta.origin.page_numbers:
+                            if (
+                                not hasattr(current_merged.meta.origin, "page_numbers")
+                                or not current_merged.meta.origin.page_numbers
+                            ):
                                 if current_merged.meta and current_merged.meta.origin:
                                     current_merged.meta.origin.page_numbers = []
-                            
-                            if current_merged.meta and current_merged.meta.origin and current_merged.meta.origin.page_numbers is not None:
+
+                            if (
+                                current_merged.meta
+                                and current_merged.meta.origin
+                                and current_merged.meta.origin.page_numbers is not None
+                            ):
                                 for pn in chunk.meta.origin.page_numbers:
-                                    if pn not in current_merged.meta.origin.page_numbers:
-                                        current_merged.meta.origin.page_numbers.append(pn)
+                                    if (
+                                        pn
+                                        not in current_merged.meta.origin.page_numbers
+                                    ):
+                                        current_merged.meta.origin.page_numbers.append(
+                                            pn
+                                        )
                 else:
                     merged_chunks.append(current_merged)
                     current_merged = chunk
         if current_merged is not None:
             merged_chunks.append(current_merged)
 
-        logger.info(f"After merging: {len(merged_chunks)} chunks (avg {sum(len(tiktoken_encoder.encode(c.text)) for c in merged_chunks) / len(merged_chunks):.1f} tokens)")
+        logger.info(
+            f"After merging: {len(merged_chunks)} chunks (avg {sum(len(tiktoken_encoder.encode(c.text)) for c in merged_chunks) / len(merged_chunks):.1f} tokens)"
+        )
 
         result = []
         char_position = 0
@@ -152,18 +174,22 @@ def chunk_with_hybrid(doc, max_tokens: int =512, min_tokens: int =256) -> List[D
         for idx, chunk in enumerate(merged_chunks):
             headings = []
             if chunk.meta and chunk.meta.headings:
-                headings = [h.text for h in chunk.meta.headings if hasattr(h, 'text')]
+                headings = [h.text for h in chunk.meta.headings if hasattr(h, "text")]
 
             page_numbers = []
-            if chunk.meta and chunk.meta.origin and hasattr(chunk.meta.origin, 'page_numbers'):
+            if (
+                chunk.meta
+                and chunk.meta.origin
+                and hasattr(chunk.meta.origin, "page_numbers")
+            ):
                 page_numbers = chunk.meta.origin.page_numbers or []
 
             captions = []
-            if chunk.meta and hasattr(chunk.meta, 'captions') and chunk.meta.captions:
+            if chunk.meta and hasattr(chunk.meta, "captions") and chunk.meta.captions:
                 captions = [str(c) for c in chunk.meta.captions]
 
             doc_items = []
-            if chunk.meta and hasattr(chunk.meta, 'doc_items') and chunk.meta.doc_items:
+            if chunk.meta and hasattr(chunk.meta, "doc_items") and chunk.meta.doc_items:
                 doc_items = [str(item)[:100] for item in chunk.meta.doc_items[:3]]
 
             token_count = len(tiktoken_encoder.encode(chunk.text))
@@ -174,28 +200,33 @@ def chunk_with_hybrid(doc, max_tokens: int =512, min_tokens: int =256) -> List[D
             char_position = end_char
 
             chunk_data = {
-                'text': chunk_text,
-                'chunk_index': idx,
-                'token_count':token_count,
-                'start_char': start_char,
-                'end_char': end_char,
-                'headings': headings,
-                'page_numbers': page_numbers,
-                'doc_items': doc_items,
-                'captions': captions,
+                "text": chunk_text,
+                "chunk_index": idx,
+                "token_count": token_count,
+                "start_char": start_char,
+                "end_char": end_char,
+                "headings": headings,
+                "page_numbers": page_numbers,
+                "doc_items": doc_items,
+                "captions": captions,
             }
             result.append(chunk_data)
 
         if result:
             first_chunk = result[0]
-            logger.info(f"Sample chunk metadata - Headings: {first_chunk['headings']}, Pages: {first_chunk['page_numbers']}")
+            logger.info(
+                f"Sample chunk metadata - Headings: {first_chunk['headings']}, Pages: {first_chunk['page_numbers']}"
+            )
 
         return result
     except Exception as e:
         logger.error(f"HybridChunker failed: {str(e)}")
         raise Exception(f"Failed to chunk document with HybridChunker: {str(e)}")
-    
-def parse_and_chunk_document(file_path: str, chunk_size: int = 512, min_chunk_size: int = 256):
+
+
+def parse_and_chunk_document(
+    file_path: str, chunk_size: int = 512, min_chunk_size: int = 256
+):
     """
     Parse and chunk document using Docling's context-aware approach.
 
@@ -215,19 +246,28 @@ def parse_and_chunk_document(file_path: str, chunk_size: int = 512, min_chunk_si
 
     if not DOCLING_AVAILABLE:
         logger.warning("Docling not available, cannot use context-aware chunking")
-        raise ImportError("Docling is required for context-aware chunking. Run: pip install docling docling-core")
-    
+        raise ImportError(
+            "Docling is required for context-aware chunking. Run: pip install docling docling-core"
+        )
+
     try:
         doc = convert_document(file_path)
-        chunks = chunk_with_hybrid(doc, max_tokens=chunk_size, min_tokens=min_chunk_size)
-        logger.info(f"Successfully processed {Path(file_path).name}: {len(chunks)} chunks with context")
+        chunks = chunk_with_hybrid(
+            doc, max_tokens=chunk_size, min_tokens=min_chunk_size
+        )
+        logger.info(
+            f"Successfully processed {Path(file_path).name}: {len(chunks)} chunks with context"
+        )
         return chunks
-    
+
     except Exception as e:
         logger.error(f"Docling processing failed for {Path(file_path).name}: {str(e)}")
         raise Exception(f"Failed to process document with Docling: {str(e)}")
-    
-def fallback_to_unstructured(file_path: str, chunk_size: int = 512)-> List[Dict[str, Any]]:
+
+
+def fallback_to_unstructured(
+    file_path: str, chunk_size: int = 512
+) -> List[Dict[str, Any]]:
     """
     Fallback to Unstructured.io for documents Docling cannot handle.
 
@@ -244,14 +284,15 @@ def fallback_to_unstructured(file_path: str, chunk_size: int = 512)-> List[Dict[
 
     try:
         from app.services.document_service import parse_document, chunk_text
+
         text = parse_document(file_path)
         chunks = chunk_text(text, chunk_size=chunk_size, overlap=50)
 
         for chunk in chunks:
-            chunk['headings'] = []
-            chunk['page_numbers'] = []
-            chunk['doc_items'] = []
-            chunk['captions'] = []
+            chunk["headings"] = []
+            chunk["page_numbers"] = []
+            chunk["doc_items"] = []
+            chunk["captions"] = []
 
         logger.info(f"Fallback chunking complete: {len(chunks)} chunks (no context)")
 
@@ -259,7 +300,7 @@ def fallback_to_unstructured(file_path: str, chunk_size: int = 512)-> List[Dict[
     except Exception as e:
         logger.error(f"Fallback also failed: {str(e)}")
         raise Exception(f"Both Docling and Unstructured failed: {str(e)}")
-    
+
 
 def get_docling_status() -> Dict[str, Any]:
     """
@@ -274,6 +315,6 @@ def get_docling_status() -> Dict[str, Any]:
             "context_aware_chunking": DOCLING_AVAILABLE,
             "heading_preservation": DOCLING_AVAILABLE,
             "table_structure": DOCLING_AVAILABLE,
-            "layout_analysis": DOCLING_AVAILABLE
-        }
+            "layout_analysis": DOCLING_AVAILABLE,
+        },
     }

@@ -29,7 +29,6 @@ class Settings(BaseSettings):
 
     USE_AZURE_OPENAI: bool = False
 
-
     # =========================
     # AZURE OPENAI
     # =========================

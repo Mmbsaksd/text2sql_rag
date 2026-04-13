@@ -5,12 +5,9 @@ Handles Text-to-SQL conversion using Vanna.ai 2.0 with Azure OpenAI
 
 from typing import Dict, Any, List, Optional
 import uuid
-import asyncio
 import pandas as pd
 import logging
 from app.config import settings
-
-logger = logging.getLogger("rag_app.sql_service")
 
 from vanna.integrations.azureopenai.llm import AzureOpenAILlmService
 from vanna import Agent
@@ -19,36 +16,42 @@ from vanna.core.registry import ToolRegistry
 from vanna.tools import RunSqlTool
 from vanna.core.user import UserResolver, User, RequestContext
 
+logger = logging.getLogger("rag_app.sql_service")
 
-    
+
 try:
     from vanna.integrations.pinecone import PineconeAgentMemory
+
     PINECONE_AVAILABLE = True
 except ImportError:
     PINECONE_AVAILABLE = False
     from vanna.integrations.local.agent_memory import DemoAgentMemory
 
+
 class SimpleUserResolver(UserResolver):
     """Simple user resolver for SQL service - grants full access."""
-    async def resolve_user(self, request_context: RequestContext)-> User:
+
+    async def resolve_user(self, request_context: RequestContext) -> User:
         return User(
             id="sql_service_user",
             email="sql@service.local",
-            group_memberships=['user','admin']
+            group_memberships=["user", "admin"],
         )
-    
+
+
 class VannaAgentWrapper:
     """
     Wrapper around Vanna 2.0 Agent for synchronous use in FastAPI.
     Handles async-to-sync conversion and component extraction.
     """
+
     def __init__(
         self,
         azure_api_key: str,
         azure_endpoint: str,
         azure_deployment: str,
         database_url: str,
-        pinecone_api_key: Optional[str] = None
+        pinecone_api_key: Optional[str] = None,
     ):
         """
         Initialize Vanna 2.0 Agent with all components.
@@ -62,7 +65,7 @@ class VannaAgentWrapper:
             model=azure_deployment,
             api_key=azure_api_key,
             azure_endpoint=azure_endpoint,
-            api_version=settings.AZURE_OPENAI_API_VERSION
+            api_version=settings.AZURE_OPENAI_API_VERSION,
         )
 
         logger.info(
@@ -72,37 +75,36 @@ class VannaAgentWrapper:
             f"seed={settings.VANNA_SEED}"
         )
 
-
-
-        self.postgres_runner = PostgresRunner(
-            connection_string=database_url
-        )
+        self.postgres_runner = PostgresRunner(connection_string=database_url)
         self.tool = ToolRegistry()
         self.tool.register_local_tool(
-            RunSqlTool(sql_runner=self.postgres_runner),
-            access_groups=['user', 'admin']
+            RunSqlTool(sql_runner=self.postgres_runner), access_groups=["user", "admin"]
         )
 
         self.user_resolver = SimpleUserResolver()
 
         if PINECONE_AVAILABLE and pinecone_api_key:
-            logger.info(f"Using Pinecone for SQL Agent memory (index: {settings.VANNA_PINECONE_INDEX})")
+            logger.info(
+                f"Using Pinecone for SQL Agent memory (index: {settings.VANNA_PINECONE_INDEX})"
+            )
             self.memory = PineconeAgentMemory(
                 api_key=pinecone_api_key,
                 index_name=settings.VANNA_PINECONE_INDEX,
                 environment="us-east-1",
                 dimension=1536,
-                metric="cosine"
+                metric="cosine",
             )
         else:
-            logger.warning("Using in-memory storage for SQL Agent (data will not persist)")
+            logger.warning(
+                "Using in-memory storage for SQL Agent (data will not persist)"
+            )
             self.memory = DemoAgentMemory()
 
         self.agent = Agent(
             llm_service=self.llm,
             tool_registry=self.tool,
             user_resolver=self.user_resolver,
-            agent_memory=self.memory
+            agent_memory=self.memory,
         )
         logger.info("✓ Vanna 2.0 Agent initialized successfully")
 
@@ -123,11 +125,11 @@ class VannaAgentWrapper:
         if schema_context:
             full_message = f"{schema_context}\n\nQUESTION: {question}"
         else:
-            full_message =  question
-        
+            full_message = question
+
         return await self._extract_sql_from_agent(full_message)
-    
-    async def _extract_sql_from_agent(self, message: str)-> str:
+
+    async def _extract_sql_from_agent(self, message: str) -> str:
         """
         Extract SQL from Agent's UI components.
 
@@ -144,29 +146,30 @@ class VannaAgentWrapper:
         sql = None
 
         async for component in self.agent.send_message(
-            request_context=request_context,
-            message=message
+            request_context=request_context, message=message
         ):
             rich_comp = component.rich_component
 
-            if hasattr(rich_comp, 'metadata') and rich_comp.metadata:
-                if 'sql' in rich_comp.metadata:
-                    sql = rich_comp.metadata['sql']
-            
-            if hasattr(rich_comp, 'content') and rich_comp.content:
+            if hasattr(rich_comp, "metadata") and rich_comp.metadata:
+                if "sql" in rich_comp.metadata:
+                    sql = rich_comp.metadata["sql"]
+
+            if hasattr(rich_comp, "content") and rich_comp.content:
                 content = str(rich_comp.content)
 
-                if '```sql' in content.lower():
-                    parts = content.split('```')
+                if "```sql" in content.lower():
+                    parts = content.split("```")
                     for part in parts:
-                        if part.strip().lower().startswith('sql'):
+                        if part.strip().lower().startswith("sql"):
                             sql = part[3:].strip()
-        
+
         if not sql:
-            raise ValueError("Agent did not generate SQL. Please try rephrasing your question.")
+            raise ValueError(
+                "Agent did not generate SQL. Please try rephrasing your question."
+            )
         return sql
-    
-    async def execute_sql_async(self, sql: str)-> List[Dict[str, Any]]:
+
+    async def execute_sql_async(self, sql: str) -> List[Dict[str, Any]]:
         """
         Execute SQL and return results (async).
 
@@ -179,9 +182,9 @@ class VannaAgentWrapper:
         Raises:
             Exception: If SQL execution fails
         """
-        return  self._execute_and_extract_results(sql)
-    
-    def _execute_and_extract_results(self, sql: str)-> List[Dict[str, Any]]:
+        return self._execute_and_extract_results(sql)
+
+    def _execute_and_extract_results(self, sql: str) -> List[Dict[str, Any]]:
         """
         Execute SQL directly using psycopg2 and return results.
 
@@ -198,7 +201,7 @@ class VannaAgentWrapper:
             import psycopg2
             import psycopg2.extras
             import socket
-            from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+            from urllib.parse import urlparse
 
             conn_str = self.postgres_runner.connection_string
             parsed = urlparse(conn_str)
@@ -212,7 +215,9 @@ class VannaAgentWrapper:
 
                 conn_str = conn_str.replace(hostname, ipv4_address)
             except socket.gaierror as e:
-                logger.warning(f"Failed to resolve hostname to IPv4: {e}, using original hostname")
+                logger.warning(
+                    f"Failed to resolve hostname to IPv4: {e}, using original hostname"
+                )
 
             conn = psycopg2.connect(conn_str)
 
@@ -234,18 +239,20 @@ class VannaAgentWrapper:
             logger.error(f"SQL execution failed: {e}")
             raise ValueError(f"Failed to execute SQL: {str(e)}")
 
+
 class TextToSQLService:
     """
     Service for converting natural language to SQL using Vanna.ai 2.0 Agent Framework.
     Maintains compatibility with existing FastAPI endpoints.
     """
+
     def __init__(
-            self,
-            database_url: str | None = None,
-            azure_api_key: str | None = None,
-            azure_endpoint: str | None = None,
-            azure_deployment: str | None = None,
-            query_cache_service=None
+        self,
+        database_url: str | None = None,
+        azure_api_key: str | None = None,
+        azure_endpoint: str | None = None,
+        azure_deployment: str | None = None,
+        query_cache_service=None,
     ):
         """
         Initialize the Text-to-SQL service with Vanna 2.0 Agent.
@@ -262,7 +269,9 @@ class TextToSQLService:
         self.query_cache_service = query_cache_service
         self.azure_api_key = azure_api_key or settings.AZURE_OPENAI_API_KEY
         self.azure_endpoint = azure_endpoint or settings.AZURE_OPENAI_ENDPOINT
-        self.azure_deployment = azure_deployment or settings.AZURE_OPENAI_DEPLOYMENT_NAME
+        self.azure_deployment = (
+            azure_deployment or settings.AZURE_OPENAI_DEPLOYMENT_NAME
+        )
 
         if not self.azure_api_key:
             raise ValueError("AZURE_OPENAI_API_KEY is required")
@@ -272,16 +281,16 @@ class TextToSQLService:
 
         if not self.azure_deployment:
             raise ValueError("AZURE_OPENAI_DEPLOYMENT is required")
-        
+
         pinecone_key = settings.PINECONE_API_KEY if PINECONE_AVAILABLE else None
         self.vanna = VannaAgentWrapper(
             azure_api_key=self.azure_api_key,
             azure_endpoint=self.azure_endpoint,
-            azure_deployment = self.azure_deployment,
+            azure_deployment=self.azure_deployment,
             database_url=self.database_url,
-            pinecone_api_key=pinecone_key
+            pinecone_api_key=pinecone_key,
         )
-        
+
         self.pending_queries: Dict[str, Dict[str, Any]] = {}
         self.is_trained = False
         self.schema_context = ""
@@ -307,7 +316,7 @@ class TextToSQLService:
         """
         schema_parts = []
         schema_parts.append("DATABASE SCHEMA DOCUMENTATION")
-        schema_parts.append("="* 60)
+        schema_parts.append("=" * 60)
 
         documentation = """
 This is an e-commerce database with three main tables:
@@ -328,7 +337,6 @@ IMPORTANT NOTES:
 
         schema_parts.append("\nTABLE SCHEMAS:")
         schema_parts.append("-" * 60)
-
 
         schema_parts.append("""
 Table: customers
@@ -367,16 +375,31 @@ Columns:
   - created_at (TIMESTAMP)
   - updated_at (TIMESTAMP)
 """)
-        
+
         schema_parts.append("\nEXAMPLE QUERIES:")
         schema_parts.append("-" * 60)
 
         examples = [
-            ("How many customers do we have?", "SELECT COUNT(*) as customer_count FROM customers;"),
-            ("What is the total revenue from all orders?", "SELECT SUM(total_amount) as total_revenue FROM orders;"),
-            ("List all delivered orders", "SELECT * FROM orders WHERE status = 'Delivered' ORDER BY order_date DESC;"),
-            ("How many orders per customer segment?", "SELECT c.segment, COUNT(o.id) as order_count FROM customers c LEFT JOIN orders o ON c.id = o.customer_id GROUP BY c.segment;"),
-            ("Top 10 customers by total spending", "SELECT c.name, c.email, SUM(o.total_amount) as total_spent FROM customers c JOIN orders o ON c.id = o.customer_id GROUP BY c.id, c.name, c.email ORDER BY total_spent DESC LIMIT 10;"),
+            (
+                "How many customers do we have?",
+                "SELECT COUNT(*) as customer_count FROM customers;",
+            ),
+            (
+                "What is the total revenue from all orders?",
+                "SELECT SUM(total_amount) as total_revenue FROM orders;",
+            ),
+            (
+                "List all delivered orders",
+                "SELECT * FROM orders WHERE status = 'Delivered' ORDER BY order_date DESC;",
+            ),
+            (
+                "How many orders per customer segment?",
+                "SELECT c.segment, COUNT(o.id) as order_count FROM customers c LEFT JOIN orders o ON c.id = o.customer_id GROUP BY c.segment;",
+            ),
+            (
+                "Top 10 customers by total spending",
+                "SELECT c.name, c.email, SUM(o.total_amount) as total_spent FROM customers c JOIN orders o ON c.id = o.customer_id GROUP BY c.id, c.name, c.email ORDER BY total_spent DESC LIMIT 10;",
+            ),
         ]
         for i, (question, sql) in enumerate(examples, 1):
             schema_parts.append(f"\nExample {i}:")
@@ -407,37 +430,43 @@ Columns:
         query_id = str(uuid.uuid4())
 
         if not self.is_trained:
-            raise Exception("Schema context not prepared. Call complete_training() first.")
-        
+            raise Exception(
+                "Schema context not prepared. Call complete_training() first."
+            )
+
         if self.query_cache_service and self.query_cache_service.enabled:
             cache_key = self.query_cache_service.get_sql_gen_key(question)
             cache_result = self.query_cache_service.get(cache_key, cache_type="sql_gen")
 
             if cache_result and "sql" in cache_result:
-                logger.info(f"SQL generation cache HIT for question: '{question[:50]}...'")
+                logger.info(
+                    f"SQL generation cache HIT for question: '{question[:50]}...'"
+                )
 
                 self.pending_queries[query_id] = {
                     "question": question,
-                    'sql': cache_result["sql"],
-                    'status': 'pending_approval',
-                    'generated_at': pd.Timestamp.now().isoformat(),
-                    'cache_hit': True
+                    "sql": cache_result["sql"],
+                    "status": "pending_approval",
+                    "generated_at": pd.Timestamp.now().isoformat(),
+                    "cache_hit": True,
                 }
 
                 return {
-                    'query_id': query_id,
-                    'question': question,
-                    'sql': cache_result["sql"],
-                    'explanation': cache_result.get("explanation","This SQL will retrieve data from your database. Please review before approving."),
-                    'status': 'pending_approval',
-                    'cache_hit': True,
-                    'cost_saved': "$0.08"
+                    "query_id": query_id,
+                    "question": question,
+                    "sql": cache_result["sql"],
+                    "explanation": cache_result.get(
+                        "explanation",
+                        "This SQL will retrieve data from your database. Please review before approving.",
+                    ),
+                    "status": "pending_approval",
+                    "cache_hit": True,
+                    "cost_saved": "$0.08",
                 }
-            
+
         try:
             sql = await self.vanna.generate_sql_async(
-                question=question,
-                schema_context=self.schema_context
+                question=question, schema_context=self.schema_context
             )
             explanation = "This SQL will retrieve data from your database. Please review before approving."
 
@@ -446,35 +475,40 @@ Columns:
                 cache_value = {
                     "sql": sql,
                     "explanation": explanation,
-                    "question": question
+                    "question": question,
                 }
                 ttl = settings.CACHE_TTL_SQL_GEN
-                self.query_cache_service.set(cache_key, cache_value, ttl=ttl, cache_type="sql_gen")
-                logger.info(f"SQL generation cache MISS - cached for '{question[:50]}...' (TTL: {ttl}s)")
+                self.query_cache_service.set(
+                    cache_key, cache_value, ttl=ttl, cache_type="sql_gen"
+                )
+                logger.info(
+                    f"SQL generation cache MISS - cached for '{question[:50]}...' (TTL: {ttl}s)"
+                )
 
-            self.pending_queries[query_id]={
+            self.pending_queries[query_id] = {
                 "question": question,
-                'sql':sql,
-                'status':'pending_approval',
-                'generated_at': pd.Timestamp.now().isoformat(),
-                'cache_hit': False,
-                'cost_saved': "$0.00"
+                "sql": sql,
+                "status": "pending_approval",
+                "generated_at": pd.Timestamp.now().isoformat(),
+                "cache_hit": False,
+                "cost_saved": "$0.00",
             }
             return {
-                'query_id': query_id,
-                'question': question,
-                'sql': sql,
-                'explanation': explanation,
-                'status': 'pending_approval',
-                'cache_hit': False,
-                'cost_saved': "$0.00"
+                "query_id": query_id,
+                "question": question,
+                "sql": sql,
+                "explanation": explanation,
+                "status": "pending_approval",
+                "cache_hit": False,
+                "cost_saved": "$0.00",
             }
-
 
         except Exception as e:
             raise Exception(f"Failed to generate SQL: {str(e)}")
-        
-    async def execute_approved_query(self, query_id: str, approved: bool)-> Dict[str, Any]:
+
+    async def execute_approved_query(
+        self, query_id: str, approved: bool
+    ) -> Dict[str, Any]:
         """
         Execute a SQL query after user approval using Vanna 2.0 Agent.
 
@@ -491,82 +525,83 @@ Columns:
             Dictionary with results or rejection message, plus cache_hit indicator
         """
         if query_id not in self.pending_queries:
-            return {
-                'error': "query ID not found",
-                'status': 'error'
-            }
+            return {"error": "query ID not found", "status": "error"}
         query_info = self.pending_queries[query_id]
         if not approved:
             del self.pending_queries[query_id]
             return {
-                'query_id': query_id,
-                'status': 'rejected',
-                'message': 'Query execution cancelled by user'
+                "query_id": query_id,
+                "status": "rejected",
+                "message": "Query execution cancelled by user",
             }
-        sql = query_info['sql']
+        sql = query_info["sql"]
         is_select_query = sql.strip().upper().startswith("SELECT")
 
-        if is_select_query and self.query_cache_service and self.query_cache_service.enabled:
+        if (
+            is_select_query
+            and self.query_cache_service
+            and self.query_cache_service.enabled
+        ):
             cache_key = self.query_cache_service.get_sql_result_key(sql)
-            cache_result = self.query_cache_service.get(cache_key, cache_type="sql_result")
+            cache_result = self.query_cache_service.get(
+                cache_key, cache_type="sql_result"
+            )
 
             if cache_result and "results" in cache_result:
                 logger.info(f"SQL result cache HIT for query: '{sql[:50]}...'")
 
                 del self.pending_queries[query_id]
                 return {
-                    'query_id': query_id,
-                    'question': query_info['question'],
-                    'sql':sql,
-                    'results': cache_result['results'],
-                    'result_count': cache_result['result_count'],
-                    'status': 'executed',
-                    'cache_hit': True,
-                    'cache_at': cache_result.get("executed_at")
+                    "query_id": query_id,
+                    "question": query_info["question"],
+                    "sql": sql,
+                    "results": cache_result["results"],
+                    "result_count": cache_result["result_count"],
+                    "status": "executed",
+                    "cache_hit": True,
+                    "cache_at": cache_result.get("executed_at"),
                 }
         try:
             results = await self.vanna.execute_sql_async(sql)
-            if is_select_query and self.query_cache_service and self.query_cache_service.enabled:
+            if (
+                is_select_query
+                and self.query_cache_service
+                and self.query_cache_service.enabled
+            ):
                 cache_key = self.query_cache_service.get_sql_result_key(sql)
                 cache_value = {
                     "results": results,
                     "sql": sql,
-                    "executed_at": pd.Timestamp.now().isoformat()
+                    "executed_at": pd.Timestamp.now().isoformat(),
                 }
                 ttl = settings.CACHE_TTL_SQL_RESULT
-                self.query_cache_service.set(cache_key, cache_value, ttl=ttl, cache_type="sql_result")
-                logger.info(f"SQL result cache MISS - cached for '{sql[:50]}...' (TTL: {ttl}s)")
+                self.query_cache_service.set(
+                    cache_key, cache_value, ttl=ttl, cache_type="sql_result"
+                )
+                logger.info(
+                    f"SQL result cache MISS - cached for '{sql[:50]}...' (TTL: {ttl}s)"
+                )
 
             del self.pending_queries[query_id]
 
             return {
-                'query_id': query_id,
-                'question': query_info['question'],
-                'sql': sql,
-                'results': results,
-                'result_count': len(results),
-                'status': 'executed',
-                'cache_hit': False
+                "query_id": query_id,
+                "question": query_info["question"],
+                "sql": sql,
+                "results": results,
+                "result_count": len(results),
+                "status": "executed",
+                "cache_hit": False,
             }
-        
+
         except Exception as e:
-            return {
-                'query_id': query_id,
-                'error': str(e),
-                "status": 'error'
-            }
-        
-    def get_pending_queries(self)-> List[Dict[str, Any]]:
+            return {"query_id": query_id, "error": str(e), "status": "error"}
+
+    def get_pending_queries(self) -> List[Dict[str, Any]]:
         """
         Get list of all pending queries awaiting approval.
 
         Returns:
             List of pending query information
         """
-        return [
-            {
-                'query_id': qid,
-                **info
-            }
-            for qid, info in self.pending_queries.items()
-        ]
+        return [{"query_id": qid, **info} for qid, info in self.pending_queries.items()]

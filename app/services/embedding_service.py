@@ -2,12 +2,14 @@
 Embedding Service
 Handles generation of embeddings using OpenAI's API.
 """
+
 from typing import List, Tuple, Optional, Dict
 from openai import AsyncOpenAI, AsyncAzureOpenAI
 import logging
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
 
 class EmbeddingService:
     """Service for generating text embeddings using OpenAI."""
@@ -38,7 +40,7 @@ class EmbeddingService:
             self.client = AsyncAzureOpenAI(
                 api_key=self.api_key,
                 azure_endpoint=self.endpoint,
-                api_version=self.api_version
+                api_version=self.api_version,
             )
         else:
             self.api_key = api_key or settings.OPENAI_API_KEY
@@ -49,7 +51,9 @@ class EmbeddingService:
             self.client = AsyncOpenAI(api_key=self.api_key)
             self.model = "text-embedding-3-small"
 
-    async def generate_embeddings(self, texts: List[str]) -> Tuple[List[List[float]], Optional[Dict]]:
+    async def generate_embeddings(
+        self, texts: List[str]
+    ) -> Tuple[List[List[float]], Optional[Dict]]:
         """
         Generate embeddings for a list of texts with caching support.
 
@@ -71,7 +75,7 @@ class EmbeddingService:
         """
         if not texts:
             return [], None
-        
+
         if self.query_cache_service and self.query_cache_service.enabled:
             embeddings = []
             text_to_generate = []
@@ -84,12 +88,12 @@ class EmbeddingService:
                 cached = self.query_cache_service.get(cache_key)
                 if cached is not None and "embeddings" in cached:
                     embeddings.append(cached["embeddings"])
-                    cache_hits +=1
+                    cache_hits += 1
                 else:
                     embeddings.append(None)
                     text_to_generate.append(text)
                     text_indices.append(i)
-                    cache_misses+=1
+                    cache_misses += 1
 
             if text_to_generate:
                 try:
@@ -103,27 +107,26 @@ class EmbeddingService:
                     for idx, embedding in zip(text_indices, new_embeddings):
                         embeddings[idx] = embedding
 
-                        cache_key = self.query_cache_service.get_embedding_key(texts[idx])
+                        cache_key = self.query_cache_service.get_embedding_key(
+                            texts[idx]
+                        )
                         cache_value = {
                             "embeddings": embedding,
                             "model": self.model,
-                            "text_length": len(texts[idx])
+                            "text_length": len(texts[idx]),
                         }
                         ttl = settings.CACHE_TTL_EMBEDDINGS
                         self.query_cache_service.set(
-                            cache_key,
-                            cache_value, 
-                            ttl=ttl, 
-                            cache_type="embedding"
+                            cache_key, cache_value, ttl=ttl, cache_type="embedding"
                         )
                     total = cache_hits + cache_misses
                     hit_rate = (cache_hits / total * 100) if total > 0 else 0
 
                     logger.debug(
-                         f"Embedding cache: {cache_hits} hits, {cache_misses} misses ({hit_rate:.1f}% hit rate)"
+                        f"Embedding cache: {cache_hits} hits, {cache_misses} misses ({hit_rate:.1f}% hit rate)"
                     )
-                    
-                    if hasattr(response, 'usage') and response.usage:
+
+                    if hasattr(response, "usage") and response.usage:
                         user_info = {
                             "prompt_tokens": response.usage.prompt_tokens,
                             "total_tokens": response.usage.total_tokens,
@@ -133,20 +136,22 @@ class EmbeddingService:
                         }
                     else:
                         user_info = {
-                        "cache_hits": cache_hits,
-                        "cache_misses": cache_misses,
-                    }
+                            "cache_hits": cache_hits,
+                            "cache_misses": cache_misses,
+                        }
                     return embeddings, user_info
-                
+
                 except Exception as e:
                     raise Exception(f"Failed to generate embeddings: {str(e)}")
-                
+
             else:
-                logger.debug(f"Embedding cache: {cache_hits} hits, 0 misses (100% miss rate)")
+                logger.debug(
+                    f"Embedding cache: {cache_hits} hits, 0 misses (100% miss rate)"
+                )
                 return embeddings, {
                     "cache_hits": cache_hits,
                     "cache_misses": 0,
-                    "model": self.model
+                    "model": self.model,
                 }
         try:
             response = await self.client.embeddings.create(
@@ -156,17 +161,21 @@ class EmbeddingService:
             )
             embeddings = [item.embedding for item in response.data]
 
-            user_info = {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "total_tokens": response.usage.total_tokens,
-                "model": self.model
-            }if hasattr(response, 'usage') and response.usage else None
+            user_info = (
+                {
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "total_tokens": response.usage.total_tokens,
+                    "model": self.model,
+                }
+                if hasattr(response, "usage") and response.usage
+                else None
+            )
 
             return embeddings, user_info
-        
+
         except Exception as e:
             raise Exception(f"Failed to generate embeddings: {str(e)}")
-    
+
     async def generate_single_embedding(self, text: str) -> List[float]:
         """
         Generate embedding for a single text.
@@ -179,8 +188,8 @@ class EmbeddingService:
         """
         embeddings, _ = await self.generate_embeddings([text])
         return embeddings[0]
-    
-    def get_embedding_dimension(self)-> int:
+
+    def get_embedding_dimension(self) -> int:
         """
         Get the dimension of embeddings produced by this service.
 

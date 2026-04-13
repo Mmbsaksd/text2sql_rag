@@ -43,7 +43,9 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
-    def save_document(self, document_id: str, file_path: Path, file_extension: str) -> None:
+    def save_document(
+        self, document_id: str, file_path: Path, file_extension: str
+    ) -> None:
         """
         Save original document file to storage.
 
@@ -58,7 +60,9 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
-    def save_chunks(self, document_id: str, file_extension: str, chunks: List[Dict]) -> None:
+    def save_chunks(
+        self, document_id: str, file_extension: str, chunks: List[Dict]
+    ) -> None:
         """
         Save chunks.json to storage.
 
@@ -73,7 +77,9 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
-    def save_embeddings(self, document_id: str, file_extension: str, embeddings: np.ndarray) -> None:
+    def save_embeddings(
+        self, document_id: str, file_extension: str, embeddings: np.ndarray
+    ) -> None:
         """
         Save embeddings.npy to storage.
 
@@ -88,7 +94,9 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
-    def save_metadata(self, document_id: str, file_extension: str, metadata: Dict) -> None:
+    def save_metadata(
+        self, document_id: str, file_extension: str, metadata: Dict
+    ) -> None:
         """
         Save metadata.json to storage.
 

@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1.7
+
+FROM public.ecr.aws/lambda/python:3.12
+
+RUN dnf install -y \
+    cairo \
+    file-libs \
+    fontconfig \
+    freetype \
+    gcc \
+    gcc-c++ \
+    glib2 \
+    harfbuzz \
+    libICE \
+    libSM \
+    libX11 \
+    libXau \
+    libXdmcp \
+    libXext \
+    libXrender \
+    libglvnd-glx \
+    libjpeg-turbo \
+    libpng \
+    libtiff \
+    libxcb \
+    mesa-libGL \
+    mesa-libgbm \
+    openjpeg2 \
+    pango \
+    poppler-glib \
+    poppler-utils \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf

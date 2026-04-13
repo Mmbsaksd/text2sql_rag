@@ -13,14 +13,17 @@ Separate from document cache (S3/local) which handles large file storage.
 import json
 import hashlib
 import logging
-from typing import Optional, Dict, Any, List
-from datetime import datetime
+from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
+
 class QueryCacheService:
     """Redis-based cache service for query results, embeddings, and SQL."""
-    def __init__(self, redis_url: Optional[str]=None, redis_token: Optional[str]=None):
+
+    def __init__(
+        self, redis_url: Optional[str] = None, redis_token: Optional[str] = None
+    ):
         """
         Initialize Upstash Redis connection.
 
@@ -43,9 +46,10 @@ class QueryCacheService:
         if redis_url and redis_token:
             try:
                 from upstash_redis import Redis
+
                 self.client = Redis(url=redis_url, token=redis_token)
                 self.client.ping()
-                self.enabled=True
+                self.enabled = True
                 logger.info("✅ Upstash Redis cache connected successfully")
             except ImportError:
                 logger.warning(
@@ -62,21 +66,22 @@ class QueryCacheService:
                 "ℹ️  Upstash Redis credentials not configured. "
                 "Cache disabled. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN to enable."
             )
+
     def _compute_hash(self, text: str) -> str:
         """Compute SHA-256 hash of text for cache keys."""
         return hashlib.sha256(text.strip().encode()).hexdigest()
-    
-    def _serialize(self, value: Any)-> str:
+
+    def _serialize(self, value: Any) -> str:
         """Serialize value to JSON string for storage."""
         return json.dumps(value, default=str)
-    
-    def _deserialize(self, value: str)-> Any:
+
+    def _deserialize(self, value: str) -> Any:
         """Deserialize JSON string to Python object."""
         return json.loads(value)
-    
+
     # ==================== Core Cache Operations ====================
 
-    def get(self, key: str, cache_type: str = "rag")-> Optional[Dict]:
+    def get(self, key: str, cache_type: str = "rag") -> Optional[Dict]:
         """
         Retrieve value from cache.
 
@@ -99,23 +104,17 @@ class QueryCacheService:
                 self._record_miss(cache_type)
                 logger.debug(f"Cache MISS: {key}")
                 return None
-            
+
             self._record_hit(cache_type)
             logger.debug(f"Cache HIT: {key}")
             return self._deserialize(result)
-        
+
         except Exception as e:
             logger.warning(f"Cache GET error for key {key}: {e}")
             self._record_miss(cache_type)
             return None
-    
-    def set(
-            self,
-            key: str,
-            value: Dict,
-            ttl: int,
-            cache_type: str = "rag"
-    )-> bool:
+
+    def set(self, key: str, value: Dict, ttl: int, cache_type: str = "rag") -> bool:
         """
         Store value in cache with TTL.
 
@@ -130,13 +129,13 @@ class QueryCacheService:
         """
         if not self.enabled:
             return False
-        
+
         try:
             serialized = self._serialize(value)
             self.client.setex(key, ttl, serialized)
             logger.debug(f"Cache SET: {key} (TTL: {ttl}s)")
             return True
-        
+
         except Exception as e:
             logger.warning(f"Cache SET error for key {key}: {e}")
             return False
@@ -153,26 +152,28 @@ class QueryCacheService:
         """
         if not self.enabled:
             return 0
-        
+
         try:
             keys = self.client.keys(pattern)
             if not keys:
                 return 0
-            
+
             deleted = 0
             for key in keys:
                 if isinstance(key, bytes):
                     key = key.decode("utf-8")
                 self.client.delete(key)
-                deleted +=1
+                deleted += 1
 
-            logger.info(f"Cache invalidation: Deleted {deleted} keys matching '{pattern}'")
+            logger.info(
+                f"Cache invalidation: Deleted {deleted} keys matching '{pattern}'"
+            )
             return deleted
-        
+
         except Exception as e:
             logger.warning(f"Cache DELETE error for pattern {pattern}: {e}")
             return 0
-        
+
     def flush_all(self) -> bool:
         """
         Clear entire cache (use with caution).
@@ -182,33 +183,33 @@ class QueryCacheService:
         """
         if not self.enabled:
             return False
-        
+
         try:
             self.client.flushall()
             logger.info("Cache flushed: All keys deleted")
             return True
-        
+
         except Exception as e:
             logger.warning(f"Cache FLUSH error: {e}")
             return False
-        
+
     # ==================== Cache Key Generators ====================
-    def get_embedding_key(self, text: str)-> str:
+    def get_embedding_key(self, text: str) -> str:
         """Generate cache key for embedding."""
         text_hash = self._compute_hash(text)
         return f"embedding:{text_hash}"
-    
+
     def get_rag_key(self, question: str, top_k: int) -> str:
         """Generate cache key for RAG response."""
         question_hash = self._compute_hash(question.lower())
         return f"rag:{question_hash}:{top_k}"
 
-    def get_sql_gen_key(self, question: str)-> str:
+    def get_sql_gen_key(self, question: str) -> str:
         """Generate cache key for SQL generation."""
         question_hash = self._compute_hash(question.lower())
         return f"sql_gen:{question_hash}"
-    
-    def get_sql_result_key(self, sql_query: str)-> str:
+
+    def get_sql_result_key(self, sql_query: str) -> str:
         """
         Generate cache key for SQL result.
 
@@ -222,15 +223,14 @@ class QueryCacheService:
     def _record_hit(self, cache_type: str):
         """Record cache hit for statistics."""
         if cache_type in self.stats:
-            self.stats[cache_type]["hits"] +=1
-
+            self.stats[cache_type]["hits"] += 1
 
     def _record_miss(self, cache_type: str):
         """Record cache miss for statistics."""
         if cache_type in self.stats:
-            self.stats[cache_type]["misses"] +=1
+            self.stats[cache_type]["misses"] += 1
 
-    def get_stats(self)-> Dict:
+    def get_stats(self) -> Dict:
         """
         Get cache hit/miss statistics.
 
@@ -240,27 +240,25 @@ class QueryCacheService:
         stats_with_rates = {}
         for cache_type, counts in self.stats.items():
             total = counts["hits"] + counts["misses"]
-            hit_rate = (counts["hits"]/total * 100) if total > 0 else 0
+            hit_rate = (counts["hits"] / total * 100) if total > 0 else 0
             stats_with_rates[cache_type] = {
                 "hits": counts["hits"],
                 "misses": counts["misses"],
                 "total_queries": total,
                 "hit_rate": f"{hit_rate:.1f}%",
             }
-        
-        return {
-            "enabled": self.enabled,
-            "cache_types": stats_with_rates
-        }
+
+        return {"enabled": self.enabled, "cache_types": stats_with_rates}
+
     def reset_stats(self):
         """Reset statistics counters."""
         for cache_type in self.stats:
-            self.stats[cache_type] =  {"hits": 0, "misses": 0}
+            self.stats[cache_type] = {"hits": 0, "misses": 0}
         logger.info("Cache statistics reset")
 
     # ==================== Health Check ====================
 
-    def health_check(self)-> Dict:
+    def health_check(self) -> Dict:
         """
         Check Redis connection health.
 

@@ -6,7 +6,6 @@ Now supports pluggable storage backends (local filesystem or S3).
 """
 
 import hashlib
-import json
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -19,6 +18,7 @@ from app.config import settings
 
 logger = logging.getLogger("rag_app.cache_service")
 
+
 class CacheService:
     """
     Manages caching of document chunks and embeddings.
@@ -28,6 +28,7 @@ class CacheService:
     - Local filesystem (for development)
     - AWS S3 (for Lambda deployment)
     """
+
     def __init__(self, storage_backend: Optional[StorageBackend] = None):
         """
         Initialize cache service with storage backend.
@@ -39,26 +40,31 @@ class CacheService:
         if storage_backend is None:
             backend_type = getattr(settings, "STORAGE_BACKEND", "local").lower()
 
-            
             if backend_type == "s3":
                 try:
                     self.storage = S3StorageBackend()
-                    logger.info(f"Using S3 storage (bucket: {settings.S3_CACHE_BUCKET})")
+                    logger.info(
+                        f"Using S3 storage (bucket: {settings.S3_CACHE_BUCKET})"
+                    )
                 except Exception as e:
-                    logger.warning(f"Failed to initialize S3 storage: {e}. Falling back to local.")
+                    logger.warning(
+                        f"Failed to initialize S3 storage: {e}. Falling back to local."
+                    )
                     self.storage = LocalStorageBackend()
             elif backend_type == "local":
                 self.storage = LocalStorageBackend()
                 logger.info(f"Using local storage (dir: {settings.CACHE_DIR})")
-            
+
             else:
                 raise ValueError(f"Unknown storage backend: {backend_type}")
-        
+
         else:
             self.storage = storage_backend
-            logger.info(f"Using custom storage backend: {type(storage_backend).__name__}")
-    
-    def compute_document_id(self, file_path: Path)-> str:
+            logger.info(
+                f"Using custom storage backend: {type(storage_backend).__name__}"
+            )
+
+    def compute_document_id(self, file_path: Path) -> str:
         """
         Generate unique document ID from file contents using SHA-256.
         Same file = same ID (true content-based deduplication).
@@ -74,16 +80,16 @@ class CacheService:
         """
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
-        
+
         sha256 = hashlib.sha256()
 
-        with open(file_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(8192),b''):
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
                 sha256.update(chunk)
-        
+
         doc_id = sha256.hexdigest()
         return doc_id
-    
+
     def cache_exists(self, doc_id: str, file_extension: str) -> bool:
         """
         Check if valid cache exists for document ID.
@@ -100,8 +106,8 @@ class CacheService:
         except Exception as e:
             logger.warning(f"Error checking cache for {doc_id}: {e}")
             return False
-        
-    def save_document(self, doc_id: str , file_path: Path, file_extension: str)->None:
+
+    def save_document(self, doc_id: str, file_path: Path, file_extension: str) -> None:
         """
         Save original document to storage.
 
@@ -123,13 +129,13 @@ class CacheService:
             raise
 
     def save_chunks_and_embeddings(
-            self,
-            doc_id: str,
-            file_extension: str,
-            chunks: List[Dict[str, Any]],
-            embeddings: List[List[float]],
-            metadata: Dict[str, Any]
-    )-> None:
+        self,
+        doc_id: str,
+        file_extension: str,
+        chunks: List[Dict[str, Any]],
+        embeddings: List[List[float]],
+        metadata: Dict[str, Any],
+    ) -> None:
         """
         Save chunks, embeddings, and metadata to cache.
 
@@ -148,7 +154,7 @@ class CacheService:
             raise ValueError(
                 f"Chunk/embedding mismatch: {len(chunks)} chunks, {len(embeddings)} embeddings"
             )
-        
+
         try:
             embeddings_array = np.array(embeddings, dtype=np.float32)
 
@@ -166,8 +172,10 @@ class CacheService:
             except Exception:
                 pass
             raise Exception(f"Failed to save cache: {str(e)}")
-        
-    def load_chunks_and_embeddings(self, doc_id: str, file_extension: str) -> Optional[Dict[str, Any]]:
+
+    def load_chunks_and_embeddings(
+        self, doc_id: str, file_extension: str
+    ) -> Optional[Dict[str, Any]]:
         """
         Load cached chunks and embeddings.
 
@@ -192,23 +200,19 @@ class CacheService:
 
             embeddings = embeddings_array.tolist()
 
-            if len(chunks)!= len(embeddings):
+            if len(chunks) != len(embeddings):
                 logger.error(
                     f"Cache corruption: {len(chunks)} chunks but {len(embeddings)} embeddings"
                 )
                 return None
             logger.info(f"Loaded {len(chunks)} chunks from cache for {doc_id}")
-            return {
-                'chunks': chunks,
-                'embeddings': embeddings,
-                'metadata': metadata
-            }
+            return {"chunks": chunks, "embeddings": embeddings, "metadata": metadata}
 
         except Exception as e:
             logger.warning(f"Failed to load cache for {doc_id}: {str(e)}")
             return None
-        
-    def get_cache_stats(self)-> Dict[str, Any]:
+
+    def get_cache_stats(self) -> Dict[str, Any]:
         """
         Get cache statistics from storage backend.
 
@@ -218,12 +222,11 @@ class CacheService:
         try:
             return self.storage.get_stats()
         except Exception as e:
-            return {
-                'error': str(e),
-                'total_documents': 0
-            }
-        
-    def clear_cache(self, doc_id: Optional[str]=None, file_extension: Optional[str]=None)-> Dict[str, Any]:
+            return {"error": str(e), "total_documents": 0}
+
+    def clear_cache(
+        self, doc_id: Optional[str] = None, file_extension: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Clear cache for specific document or entire cache.
 
@@ -240,53 +243,57 @@ class CacheService:
         try:
             if doc_id:
                 if not file_extension:
-                    return{
-                        'cleared': False,
-                        'message': 'file_extension required when clearing specific document',
-                        'documents_cleared': 0
+                    return {
+                        "cleared": False,
+                        "message": "file_extension required when clearing specific document",
+                        "documents_cleared": 0,
                     }
-                
+
                 self.storage.delete(doc_id, file_extension)
                 logger.info(f"Cleared cache for document: {doc_id}")
                 return {
-                    'cleared': True,
-                    'message': f'Cleared cache for document {doc_id}',
-                    'documents_cleared': 1
-                    }
+                    "cleared": True,
+                    "message": f"Cleared cache for document {doc_id}",
+                    "documents_cleared": 1,
+                }
             else:
-                if hasattr(self.storage, 'delete_all'):
+                if hasattr(self.storage, "delete_all"):
                     try:
                         objects_deleted = self.storage.delete_all()
-                        logger.info(f"Cleared entire cache: {objects_deleted} objects deleted")
+                        logger.info(
+                            f"Cleared entire cache: {objects_deleted} objects deleted"
+                        )
                         return {
-                            'cleared': True,
-                            'message': f'Cleared entire cache ({objects_deleted} objects deleted)',
-                            'documents_cleared': 'all',
-                            'objects_deleted': objects_deleted
+                            "cleared": True,
+                            "message": f"Cleared entire cache ({objects_deleted} objects deleted)",
+                            "documents_cleared": "all",
+                            "objects_deleted": objects_deleted,
                         }
                     except Exception as e:
                         logger.error(f"Failed to clear all cache: {e}")
                         return {
-                            'cleared': False,
-                            'message': f'Failed to clear cache: {str(e)}',
-                            'documents_cleared': 0
+                            "cleared": False,
+                            "message": f"Failed to clear cache: {str(e)}",
+                            "documents_cleared": 0,
                         }
                 else:
                     document_ids = self.storage.list_documents()
                     for doc_id in document_ids:
                         pass
-                    logger.warning("Clear entire cache not fully implemented for local backend")
+                    logger.warning(
+                        "Clear entire cache not fully implemented for local backend"
+                    )
                     return {
-                        'cleared': False,
-                        'message': 'Clear entire cache not fully implemented for local backend (use S3 backend)',
-                        'documents_cleared': 0,
-                        'total_documents': len(document_ids)
+                        "cleared": False,
+                        "message": "Clear entire cache not fully implemented for local backend (use S3 backend)",
+                        "documents_cleared": 0,
+                        "total_documents": len(document_ids),
                     }
-                    
+
         except Exception as e:
             logger.error(f"Failed to clear cache: {str(e)}")
             return {
-                'cleared': False,
-                'message': f'Failed to clear cache: {str(e)}',
-                'documents_cleared': 0
+                "cleared": False,
+                "message": f"Failed to clear cache: {str(e)}",
+                "documents_cleared": 0,
             }

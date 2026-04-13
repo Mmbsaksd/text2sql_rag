@@ -11,6 +11,7 @@ from app.config import settings
 
 logger = logging.getLogger("rag_app.vector_service")
 
+
 class VectorService:
     """Service for vector operations using Pinecone."""
 
@@ -23,13 +24,15 @@ class VectorService:
         """
         self.api_key = api_key or settings.PINECONE_API_KEY
         if not self.api_key:
-            raise ValueError("Pinecone API key is required. Set PINECONE_API_KEY in .env file.")
-        
+            raise ValueError(
+                "Pinecone API key is required. Set PINECONE_API_KEY in .env file."
+            )
+
         self.environment = settings.PINECONE_ENVIRONMENT
         self.index_name = settings.PINECONE_INDEX_NAME
 
         self.pc = PineconeGRPC(api_key=self.api_key)
-        self.index=None
+        self.index = None
 
     def connect_to_index(self):
         """
@@ -38,7 +41,7 @@ class VectorService:
         """
         try:
             existing_indexes = self.pc.list_indexes()
-            index_name = [idx['name'] for idx in existing_indexes]
+            index_name = [idx["name"] for idx in existing_indexes]
 
             if self.index_name not in index_name:
                 logger.info(f"Creating Pinecone index: {self.index_name}")
@@ -47,9 +50,8 @@ class VectorService:
                     dimension=1536,
                     metric="cosine",
                     spec=ServerlessSpec(
-                        cloud="aws",
-                        region = self.environment.replace("-aws", "")
-                    )
+                        cloud="aws", region=self.environment.replace("-aws", "")
+                    ),
                 )
                 logger.info(f"Index {self.index_name} created successfully")
 
@@ -59,13 +61,13 @@ class VectorService:
 
         except Exception as e:
             raise Exception(f"Failed to connect to Pinecone index: {str(e)}")
-        
+
     def add_documents(
-            self,
-            chunks: List[Dict[str, Any]],
-            embeddings: List[List[float]],
-            filename: str,
-            namespace: str = "default"
+        self,
+        chunks: List[Dict[str, Any]],
+        embeddings: List[List[float]],
+        filename: str,
+        namespace: str = "default",
     ):
         """
         Store document chunks with their embeddings in Pinecone.
@@ -84,43 +86,45 @@ class VectorService:
             self.connect_to_index()
 
         if len(chunks) != len(embeddings):
-            raise ValueError(f"Mismatch: {len(chunks)} chunks but {len(embeddings)} embeddings")
-        
+            raise ValueError(
+                f"Mismatch: {len(chunks)} chunks but {len(embeddings)} embeddings"
+            )
+
         try:
             vector_to_upsert = []
-            for i, (chunk, embedding) in enumerate(zip(chunks,embeddings)):
+            for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
                 vector_id = f"{filename}_{chunk['chunk_index']}"
 
                 import json
+
                 metadata = {
                     "filename": filename,
                     "chunk_index": chunk["chunk_index"],
-                    "token_count": chunk['token_count'],
-                    "text": chunk['text'][:1000],
-                    "start_char": chunk.get('start_char',0),
-                    "headings": json.dumps(chunk.get("headings",[])),
-                    "page_numbers": json.dumps(chunk.get("page_numbers",[])),
-                    "has_context": len(chunk.get("headings",[]))> 0,
+                    "token_count": chunk["token_count"],
+                    "text": chunk["text"][:1000],
+                    "start_char": chunk.get("start_char", 0),
+                    "headings": json.dumps(chunk.get("headings", [])),
+                    "page_numbers": json.dumps(chunk.get("page_numbers", [])),
+                    "has_context": len(chunk.get("headings", [])) > 0,
                 }
                 vector_to_upsert.append((vector_id, embedding, metadata))
 
             batch_size = 100
             for i in range(0, len(vector_to_upsert), batch_size):
-                batch = vector_to_upsert[i:i+batch_size]
-                self.index.upsert(
-                    vectors=batch,
-                    namespace=namespace
-                )
-            logger.info(f"Successfully upserted {len(vector_to_upsert)} vectors to Pinecone")
+                batch = vector_to_upsert[i : i + batch_size]
+                self.index.upsert(vectors=batch, namespace=namespace)
+            logger.info(
+                f"Successfully upserted {len(vector_to_upsert)} vectors to Pinecone"
+            )
         except Exception as e:
             raise Exception(f"Failed to add documents to Pinecone: {str(e)}")
 
     async def search(
-            self,
-            query_embedding: List[float],
-            top_k: int = 3,
-            namespace: str = "default",
-            filter_dict: Dict[str, Any] | None=None
+        self,
+        query_embedding: List[float],
+        top_k: int = 3,
+        namespace: str = "default",
+        filter_dict: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """
         Search for similar vectors in Pinecone.
@@ -150,25 +154,27 @@ class VectorService:
             )
 
             chunks = []
-            for match in results['matches']:
-                chunks.append({
-                    'id':match['id'],
-                    'score': match['score'],
-                    'text': match['metadata'].get('text',''),
-                    'metadata': {
-                        'filename': match['metadata'].get('filename',''),
-                        'chunk_index': match['metadata'].get('chunk_index',''),
-                        'token_count': match['metadata'].get('token_count','')
+            for match in results["matches"]:
+                chunks.append(
+                    {
+                        "id": match["id"],
+                        "score": match["score"],
+                        "text": match["metadata"].get("text", ""),
+                        "metadata": {
+                            "filename": match["metadata"].get("filename", ""),
+                            "chunk_index": match["metadata"].get("chunk_index", ""),
+                            "token_count": match["metadata"].get("token_count", ""),
+                        },
                     }
-                })
+                )
             return {
-                'query_preview': query_embedding[:5],
-                'chunks': chunks,
-                'total_found': len(chunks)
+                "query_preview": query_embedding[:5],
+                "chunks": chunks,
+                "total_found": len(chunks),
             }
         except Exception as e:
             raise Exception(f"Failed to search Pinecone: {str(e)}")
-        
+
     def get_index_stats(self, namespace: str = "default") -> Dict[str, Any]:
         """
         Get statistics about the Pinecone index.
@@ -185,13 +191,13 @@ class VectorService:
         try:
             stats = self.index.describe_index_stats()
             return {
-                "total_vector_count": stats.get('total_vector_count', 0),
-                "dimension": stats.get('dimension', 0),
-                "namespaces": stats.get('namespaces', {}),
+                "total_vector_count": stats.get("total_vector_count", 0),
+                "dimension": stats.get("dimension", 0),
+                "namespaces": stats.get("namespaces", {}),
             }
         except Exception as e:
             raise Exception(f"Failed to get index stats: {str(e)}")
-        
+
     def delete_by_filename(self, filename: str, namespace: str = "default"):
         """
         Delete all vectors associated with a filename.
@@ -211,7 +217,7 @@ class VectorService:
 
         except Exception as e:
             raise Exception(f"Failed to delete vectors: {str(e)}")
-        
+
     def delete_all_vectors(self, namespace: str = "default") -> Dict[str, Any]:
         """
         Delete all vectors from a Pinecone namespace.
@@ -239,25 +245,27 @@ class VectorService:
         try:
             if namespace == "*":
                 stats = self.get_index_stats()
-                namespaces_to_clear = list(stats.get('namespaces',{}).keys())
+                namespaces_to_clear = list(stats.get("namespaces", {}).keys())
 
                 if not namespaces_to_clear:
                     logger.info("No namespaces found to clear")
                     return {
-                        'status': 'success',
-                        'namespaces_cleared': [],
-                        'message': 'No vectors found in index'
+                        "status": "success",
+                        "namespaces_cleared": [],
+                        "message": "No vectors found in index",
                     }
                 for ns in namespaces_to_clear:
                     logger.warning(f"Deleting ALL vectors from namespace: {ns}")
                     self.index.delete(delete_all=True, namespace=ns)
 
-                logger.info(f"Cleared all vectors from {len(namespaces_to_clear)} namespaces")
+                logger.info(
+                    f"Cleared all vectors from {len(namespaces_to_clear)} namespaces"
+                )
 
                 return {
-                    'status': 'success',
-                    'namespaces_cleared': namespaces_to_clear,
-                    'message': f'Deleted all vectors from {len(namespaces_to_clear)} namespaces'
+                    "status": "success",
+                    "namespaces_cleared": namespaces_to_clear,
+                    "message": f"Deleted all vectors from {len(namespaces_to_clear)} namespaces",
                 }
             else:
                 logger.warning(f"Deleting ALL vectors from namespace: {namespace}")
@@ -266,15 +274,15 @@ class VectorService:
                 logger.info(f"Cleared all vectors from namespace: {namespace}")
 
                 return {
-                    'status': 'success',
-                    'namespaces_cleared': [namespace],
-                    'message': f'Deleted all vectors from namespace "{namespace}"'
+                    "status": "success",
+                    "namespaces_cleared": [namespace],
+                    "message": f'Deleted all vectors from namespace "{namespace}"',
                 }
 
         except Exception as e:
             logger.error(f"Failed to delete all vectors: {e}")
             return {
-                'status': 'failed',
-                'namespaces_cleared': [],
-                'message': f'Failed to delete vectors: {str(e)}'
+                "status": "failed",
+                "namespaces_cleared": [],
+                "message": f"Failed to delete vectors: {str(e)}",
             }
