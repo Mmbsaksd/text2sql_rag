@@ -11,6 +11,7 @@ env:
   BASE_IMAGE_REPOSITORY: lambda-python-deps
   BASE_IMAGE_TAG: 3.12
   LAMBDA_FUNCTION: rag-text-to-sql-server
+  LAMBDA_ROLE_NAME: rag-lambda-execution-role
 
 jobs:
   validate:
@@ -70,7 +71,6 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          API_GATEWAY_URL: ${{ secrets.API_GATEWAY_URL }}
           AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
           AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION }}
           AZURE_OPENAI_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_DEPLOYMENT_NAME }}
@@ -89,7 +89,6 @@ jobs:
           for var in \
             AWS_ACCESS_KEY_ID \
             AWS_SECRET_ACCESS_KEY \
-            API_GATEWAY_URL \
             AZURE_OPENAI_API_KEY \
             AZURE_OPENAI_API_VERSION \
             AZURE_OPENAI_DEPLOYMENT_NAME \
@@ -182,12 +181,26 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          aws lambda update-function-code \
-            --function-name "${LAMBDA_FUNCTION}" \
-            --image-uri "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" \
-            --architectures x86_64
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          ROLE_ARN="arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):role/${LAMBDA_ROLE_NAME}"
 
-          aws lambda wait function-updated \
+          if aws lambda get-function --function-name "${LAMBDA_FUNCTION}" >/dev/null 2>&1; then
+            aws lambda update-function-code \
+              --function-name "${LAMBDA_FUNCTION}" \
+              --image-uri "${IMAGE_URI}" \
+              --architectures x86_64
+          else
+            aws lambda create-function \
+              --function-name "${LAMBDA_FUNCTION}" \
+              --package-type Image \
+              --code ImageUri="${IMAGE_URI}" \
+              --role "${ROLE_ARN}" \
+              --architectures x86_64 \
+              --timeout 900 \
+              --memory-size 2048
+          fi
+
+          aws lambda wait function-active \
             --function-name "${LAMBDA_FUNCTION}"
 
       - name: Update Lambda environment variables
@@ -248,15 +261,35 @@ jobs:
           aws lambda wait function-updated \
             --function-name "${LAMBDA_FUNCTION}"
 
-      - name: Smoke test deployment
-        env:
-          PUBLIC_URL: ${{ secrets.API_GATEWAY_URL }}
+      - name: Ensure Lambda Function URL
         run: |
-          if [[ "${PUBLIC_URL}" == */prod ]] || [[ "${PUBLIC_URL}" == */prod/ ]]; then
-            echo "The public URL secret appears to include /prod, but Lambda Function URLs should not."
-            exit 1
+          if aws lambda get-function-url-config --function-name "${LAMBDA_FUNCTION}" >/tmp/function-url.json 2>/dev/null; then
+            echo "Function URL already exists."
+          else
+            aws lambda create-function-url-config \
+              --function-name "${LAMBDA_FUNCTION}" \
+              --auth-type NONE > /tmp/function-url.json
+
+            aws lambda add-permission \
+              --function-name "${LAMBDA_FUNCTION}" \
+              --statement-id FunctionURLAllowPublicAccess \
+              --action lambda:InvokeFunctionUrl \
+              --principal "*" \
+              --function-url-auth-type NONE >/dev/null 2>&1 || true
+
+            aws lambda add-permission \
+              --function-name "${LAMBDA_FUNCTION}" \
+              --statement-id FunctionURLAllowPublicInvoke \
+              --action lambda:InvokeFunction \
+              --principal "*" \
+              --function-url-auth-type NONE >/dev/null 2>&1 || true
           fi
 
+          PUBLIC_URL=$(jq -r '.FunctionUrl' /tmp/function-url.json)
+          printf 'PUBLIC_URL=%s\n' "${PUBLIC_URL}" >> "${GITHUB_ENV}"
+
+      - name: Smoke test deployment
+        run: |
           curl --fail --silent --show-error "${PUBLIC_URL%/}/health" > /tmp/health.json
           curl --fail --silent --show-error "${PUBLIC_URL%/}/info" > /tmp/info.json
 
@@ -264,8 +297,6 @@ jobs:
 
       - name: Optional S3 cache verification
         if: contains(github.event.head_commit.message, '[test-s3]')
-        env:
-          PUBLIC_URL: ${{ secrets.API_GATEWAY_URL }}
         run: |
           printf 'This is a CI cache validation document.\n' > test-s3-storage.txt
 
